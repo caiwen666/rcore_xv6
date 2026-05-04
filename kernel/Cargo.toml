@@ -1,0 +1,15 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "kernel"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+array-macro = "2.1.8"
+lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
+riscv = "0.16.0"
