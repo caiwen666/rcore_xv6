@@ -1,4 +1,8 @@
-use crate::{arch, process::cpu::CPU_MANAGER};
+use crate::{
+    arch::{self, IrqArch},
+    exception::InterruptArch,
+    process::cpu::CPU_MANAGER,
+};
 use core::{
     cell::{Cell, UnsafeCell},
     fmt,
@@ -26,8 +30,8 @@ impl SpinState {
     ///
     /// 如果是第一次加锁，会关闭中断
     pub fn push_lock(&mut self) {
-        let old_interrupted = arch::interrupt::get_interrupt_state();
-        arch::interrupt::disable_interrupt();
+        let old_interrupted = IrqArch::get_interrupt_state();
+        IrqArch::disable_interrupt();
         // 一定是先关中断，再对 SpinningState 进行操作，否则中间可能会有中断进来导致出现竞态
         if self.count == 0 {
             self.interrupted = old_interrupted;
@@ -45,13 +49,13 @@ impl SpinState {
     /// - 当前 CPU 上面必须已经施加过自旋锁，否则会 panic
     pub fn pop_lock(&mut self) {
         assert!(
-            !arch::interrupt::get_interrupt_state(),
+            !IrqArch::get_interrupt_state(),
             "release a lock that is not acquired"
         );
         assert!(self.count > 0, "release a lock that is not acquired");
         self.count -= 1;
         if self.count == 0 && self.interrupted {
-            arch::interrupt::enable_interrupt();
+            IrqArch::enable_interrupt();
         }
     }
 }

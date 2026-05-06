@@ -13,6 +13,7 @@ use crate::{
 mod arch;
 mod console;
 mod driver;
+mod exception;
 mod lang_items;
 mod mm;
 mod process;
