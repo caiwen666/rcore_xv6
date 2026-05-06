@@ -1,5 +1,7 @@
+pub mod cpu;
 mod entry;
+pub mod interrupt;
+mod mm;
 mod register;
 
-pub mod cpu;
-pub mod interrupt;
+pub use mm::{FRAME_ALLOCATOR, RiscV64MMArch as MMArch};

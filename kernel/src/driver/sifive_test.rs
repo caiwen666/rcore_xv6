@@ -32,6 +32,8 @@ impl SiFiveTest {
         unsafe {
             core::ptr::write_volatile(self.base_addr as *mut u32, value);
         }
-        loop {}
+        loop {
+            core::hint::spin_loop();
+        }
     }
 }

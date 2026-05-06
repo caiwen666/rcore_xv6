@@ -9,6 +9,15 @@ use riscv::register::{
 
 #[unsafe(no_mangle)]
 extern "C" fn init_cpu() -> ! {
+    // 清空 BSS 段
+    unsafe extern "C" {
+        fn sbss();
+        fn ebss();
+    }
+    ((sbss as *const () as usize)..(ebss as *const () as usize)).for_each(|a| unsafe {
+        (a as *mut u8).write_volatile(0);
+    });
+
     // 设置 mstatus 的 MPP 为 Supervisor，使得后续进入 Supervisor 模式
     let mut mstatus = RiscvMStatus::read();
     mstatus.set_mpp(RiscvMStatus::MPP::Supervisor);

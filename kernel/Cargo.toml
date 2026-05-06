@@ -11,5 +11,8 @@ bench = false
 
 [dependencies]
 array-macro = "2.1.8"
+bitflags = "2.11.1"
+buddy_system_allocator = "0.13.0"
 lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
 riscv = "0.16.0"
+slabmalloc = { path = "crates/slabmalloc" }

@@ -23,6 +23,7 @@ pub fn get_interrupt_state() -> bool {
     status.sie()
 }
 
+#[expect(unused)]
 pub fn init_timer() {
     // TODO
 }

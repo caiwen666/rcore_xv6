@@ -1,14 +1,17 @@
-use crate::{arch, config, sync::spin::SpinState};
+use super::config::MAX_CPU_COUNT;
+use crate::{arch, sync::spin::SpinState};
+
+/// 每个核的 M 态引导栈大小（须与 `arch/entry.S` 里 `li a0, ...` 一致）
+pub const BOOT_STACK_SIZE: usize = 4096;
 
 // riscv 要求栈对齐到 16 字节
 #[repr(align(16))]
 #[expect(dead_code)]
-struct AlignedBootStack([u8; 4096 * config::MAX_CPU_COUNT]);
+struct AlignedBootStack([u8; BOOT_STACK_SIZE * MAX_CPU_COUNT]);
 /// CPU 初始化时的栈
-///
-/// 栈大小固定为 4096 字节，如果发生了修改，还需要同步修改 `arch/entry.S`
 #[unsafe(no_mangle)]
-static BOOT_STACK: AlignedBootStack = AlignedBootStack([0; 4096 * config::MAX_CPU_COUNT]);
+#[unsafe(link_section = ".data.boot_stack")]
+static BOOT_STACK: AlignedBootStack = AlignedBootStack([0; BOOT_STACK_SIZE * MAX_CPU_COUNT]);
 
 #[expect(clippy::upper_case_acronyms)]
 pub struct CPU {
@@ -25,13 +28,13 @@ impl CPU {
 }
 
 pub struct CPUManager {
-    cpus: [CPU; config::MAX_CPU_COUNT],
+    cpus: [CPU; MAX_CPU_COUNT],
 }
 
 impl CPUManager {
     pub const fn new() -> Self {
         Self {
-            cpus: array_macro::array![_ => CPU::new(); config::MAX_CPU_COUNT],
+            cpus: array_macro::array![_ => CPU::new(); MAX_CPU_COUNT],
         }
     }
 }
