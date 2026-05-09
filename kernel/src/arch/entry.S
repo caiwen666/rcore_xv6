@@ -7,7 +7,7 @@ _entry:
     # BOOT_STACK 符号被定义在 `cpu.rs` 中
     la sp, BOOT_STACK
     # 每个 CPU 核心启动时的初始栈的大小，与 `process/cpu.rs` 中 BOOT_STACK_SIZE 一致
-    li a0, 4096
+    li a0, 1024 * 1024
     csrr a1, mhartid
     # 栈从高地址往低地址延申，sp 初始时放在高地址位置上
     addi a1, a1, 1

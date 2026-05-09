@@ -2,7 +2,7 @@ use super::config::MAX_CPU_COUNT;
 use crate::{arch, sync::spin::SpinState};
 
 /// 每个核的 M 态引导栈大小（须与 `arch/entry.S` 里 `li a0, ...` 一致）
-pub const BOOT_STACK_SIZE: usize = 4096;
+pub const BOOT_STACK_SIZE: usize = 1024 * 1024;
 
 // riscv 要求栈对齐到 16 字节
 #[repr(align(16))]
