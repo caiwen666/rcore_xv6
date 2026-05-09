@@ -7,8 +7,10 @@
 
 use crate::{
     arch::MMArch,
+    driver::VIRTIO0,
     mm::{KERNEL_SPACE, MemoryManagementArch, allocator::kernel::KernelAllocator},
 };
+use alloc::string::String;
 
 mod arch;
 mod console;
@@ -32,6 +34,15 @@ pub extern "C" fn kernel_main() {
         // 初始化虚拟内存
         MMArch::init();
         KERNEL_SPACE.lock().print_info(false);
+        println!("VIRTIO0: {} KB", VIRTIO0.lock().capacity() / 1024);
+        let mut test_buf = [0u8; 2048];
+        for i in 0..4 {
+            VIRTIO0
+                .lock()
+                .read_block_sync(i, &mut test_buf[i * 512..(i + 1) * 512]);
+        }
+        let s = String::from_utf8_lossy(&test_buf);
+        println!("{}", s);
         driver::SIFIVE_TEST.shutdown(driver::sifive_test::ShutdownReason::Normal, 0);
     }
     loop {

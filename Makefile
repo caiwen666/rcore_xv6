@@ -40,6 +40,9 @@ QEMU_FLAGS += -bios none
 QEMU_FLAGS += -kernel $(OUTPUT)/kernel.elf
 QEMU_FLAGS += -m 128M
 QEMU_FLAGS += -smp $(CPUS)
+# 挂载 Cargo.lock 作为虚拟磁盘，仅用于测试
+QEMU_FLAGS += -drive file=kernel/Cargo.lock,if=none,format=raw,id=hd0
+QEMU_FLAGS += -device virtio-blk-device,drive=hd0,bus=virtio-mmio-bus.0
 
 .PHONY: build run debug gdb
 
