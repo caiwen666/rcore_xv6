@@ -7,14 +7,14 @@ impl InterruptArch for RiscV64InterruptArch {
     #[inline]
     fn enable_interrupt() {
         let mut status = sstatus::read();
-        status.set_sie(false);
+        status.set_sie(true);
         unsafe { sstatus::write(status) };
     }
 
     #[inline]
     fn disable_interrupt() {
         let mut status = sstatus::read();
-        status.set_sie(true);
+        status.set_sie(false);
         unsafe { sstatus::write(status) };
     }
 
