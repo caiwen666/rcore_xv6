@@ -1,8 +1,4 @@
-use crate::{
-    arch::{self, IrqArch},
-    exception::InterruptArch,
-    process::cpu::CPU_MANAGER,
-};
+use crate::{arch::IrqArch, exception::InterruptArch, process::cpu::CPUManager};
 use core::{
     cell::{Cell, UnsafeCell},
     fmt,
@@ -26,37 +22,29 @@ impl SpinState {
         }
     }
 
-    /// 在当前 CPU 上加自旋锁
-    ///
-    /// 如果是第一次加锁，会关闭中断
-    pub fn push_lock(&mut self) {
-        let old_interrupted = IrqArch::get_interrupt_state();
-        IrqArch::disable_interrupt();
-        // 一定是先关中断，再对 SpinningState 进行操作，否则中间可能会有中断进来导致出现竞态
+    pub fn push_lock(&mut self, old_state: bool) {
         if self.count == 0 {
-            self.interrupted = old_interrupted;
+            self.interrupted = old_state;
         }
         self.count += 1;
     }
 
-    /// 在当前 CPU 上移除自旋锁
+    /// # Returns
     ///
-    /// 如果是最后一次移除自旋锁，会把中断状态恢复到加第一个锁之前的状态
+    /// 返回一个 bool，表示是否需要开启中断
     ///
     /// # Panics
     ///
     /// - 当前不能开启中断，否则会 panic
     /// - 当前 CPU 上面必须已经施加过自旋锁，否则会 panic
-    pub fn pop_lock(&mut self) {
+    pub fn pop_lock(&mut self) -> bool {
         assert!(
             !IrqArch::get_interrupt_state(),
             "release a lock that is not acquired"
         );
         assert!(self.count > 0, "release a lock that is not acquired");
         self.count -= 1;
-        if self.count == 0 && self.interrupted {
-            IrqArch::enable_interrupt();
-        }
+        self.count == 0 && self.interrupted
     }
 }
 
@@ -108,16 +96,18 @@ impl<T: ?Sized> SpinMutex<T> {
     }
 
     pub fn lock(&self) -> SpinMutexGuard<'_, T> {
-        unsafe {
-            let cpu = CPU_MANAGER.current_cpu();
-            cpu.spinning_state.push_lock()
-        };
-        if core::hint::unlikely(self.check_holding()) {
+        let old_state = IrqArch::get_interrupt_state();
+        IrqArch::disable_interrupt();
+        // SAFETY: 已经关闭了中断
+        let cpu = unsafe { CPUManager::current_cpu() };
+        cpu.spinning_state.push_lock(old_state);
+
+        if core::hint::unlikely(unsafe { self.check_holding() }) {
             panic!("deadlock detected: {} is locked by the same CPU", self.name);
         }
         loop {
             if let Some(guard) = self.try_lock_weak() {
-                self.cpu_id.set(Some(arch::cpu::cpu_id()));
+                self.cpu_id.set(Some(cpu.id));
                 break guard;
             }
 
@@ -128,19 +118,27 @@ impl<T: ?Sized> SpinMutex<T> {
     }
 
     pub fn unlock(&self) {
-        if core::hint::unlikely(!self.check_holding()) {
+        if core::hint::unlikely(!unsafe { self.check_holding() }) {
             panic!("unlock a lock that is not held: {}", self.name);
         }
         self.cpu_id.set(None);
         self.lock.store(false, Ordering::Release);
-        unsafe { CPU_MANAGER.current_cpu().spinning_state.pop_lock() };
+        // SAFETY: 此时还处于中断关闭期中
+        let cpu = unsafe { CPUManager::current_cpu() };
+        if cpu.spinning_state.pop_lock() {
+            IrqArch::enable_interrupt();
+        }
     }
 
     /// 检查当前锁是否被当前 CPU 持有
-    fn check_holding(&self) -> bool {
+    ///
+    /// # Safety
+    ///
+    /// 调用时需要保证中断关闭
+    unsafe fn check_holding(&self) -> bool {
         self.cpu_id
             .get()
-            .is_some_and(|cpu_id| cpu_id == arch::cpu::cpu_id())
+            .is_some_and(|cpu_id| cpu_id == unsafe { CPUManager::current_cpu().id })
     }
 }
 

@@ -9,6 +9,7 @@ use crate::{
     arch::MMArch,
     driver::VIRTIO0,
     mm::{KERNEL_SPACE, MemoryManagementArch, allocator::kernel::KernelAllocator},
+    process::cpu::CPUManager,
 };
 use alloc::string::String;
 
@@ -29,7 +30,8 @@ pub static KERNEL_ALLOCATOR: KernelAllocator = KernelAllocator;
 /// 内核的入口函数
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() {
-    if arch::cpu::cpu_id() == 0 {
+    // SAFETY: 此时中断还没开
+    if unsafe { CPUManager::current_cpu().id } == 0 {
         println!("{}", include_str!("logo.txt"));
         // 初始化虚拟内存
         MMArch::init();

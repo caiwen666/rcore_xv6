@@ -1,37 +1,48 @@
 use crate::{arch, driver::cpu::MAX_CPU_COUNT, sync::spin::SpinState};
+use core::cell::UnsafeCell;
+use lazy_static::lazy_static;
 
 #[expect(clippy::upper_case_acronyms)]
 pub struct CPU {
     /// 自旋锁的计数器
     pub spinning_state: SpinState,
+    pub id: usize,
 }
 
 impl CPU {
-    pub const fn new() -> Self {
+    pub(self) fn new(id: usize) -> Self {
         Self {
             spinning_state: SpinState::new(),
+            id,
         }
     }
 }
 
 pub struct CPUManager {
-    cpus: [CPU; MAX_CPU_COUNT],
+    cpus: UnsafeCell<[CPU; MAX_CPU_COUNT]>,
+}
+
+// SAFETY: 不同 CPU 只会访问自己对应的元素。同一个 CPU 中，访问元素的时候是关中断的
+unsafe impl Sync for CPUManager {}
+
+lazy_static! {
+    static ref CPU_MANAGER: CPUManager = CPUManager::new();
 }
 
 impl CPUManager {
-    pub const fn new() -> Self {
+    pub(self) fn new() -> Self {
         Self {
-            cpus: array_macro::array![_ => CPU::new(); MAX_CPU_COUNT],
+            cpus: UnsafeCell::new(array_macro::array![id => CPU::new(id); MAX_CPU_COUNT]),
         }
     }
-}
 
-pub static mut CPU_MANAGER: CPUManager = CPUManager::new();
-
-impl CPUManager {
     /// 获取当前 CPU
-    pub fn current_cpu(&mut self) -> &mut CPU {
-        let cpu_id = arch::cpu::cpu_id();
-        &mut self.cpus[cpu_id]
+    ///
+    /// # Safety
+    ///
+    /// 调用时需要保证中断关闭
+    pub unsafe fn current_cpu() -> &'static mut CPU {
+        let cpus = unsafe { &mut *CPU_MANAGER.cpus.get() };
+        &mut cpus[arch::cpu::cpu_id()]
     }
 }
