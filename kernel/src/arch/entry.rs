@@ -2,9 +2,10 @@ core::arch::global_asm!(include_str!("entry.S"));
 
 use crate::kernel_main;
 use riscv::register::{
-    Permission as PmpPermission, Range as PmpRange, medeleg as RiscvMedeleg, mepc as RiscvMepc,
-    mhartid as RiscvMhartid, mideleg as RiscvMideleg, mstatus as RiscvMStatus,
-    pmpaddr0 as RiscvPmpaddr0, pmpcfg0 as RiscvPmpcfg0, satp as RiscvSatp, sie as RiscvSie,
+    Permission as PmpPermission, Range as PmpRange, mcounteren as RiscvMcounteren,
+    medeleg as RiscvMedeleg, mepc as RiscvMepc, mhartid as RiscvMhartid, mideleg as RiscvMideleg,
+    mstatus as RiscvMStatus, pmpaddr0 as RiscvPmpaddr0, pmpcfg0 as RiscvPmpcfg0, satp as RiscvSatp,
+    sie as RiscvSie,
 };
 
 #[unsafe(no_mangle)]
@@ -18,9 +19,12 @@ extern "C" fn init_cpu() -> ! {
         (a as *mut u8).write_volatile(0);
     });
 
-    // 设置 mstatus 的 MPP 为 Supervisor，使得后续进入 Supervisor 模式
     let mut mstatus = RiscvMStatus::read();
+    // 设置 mstatus 的 MPP 为 Supervisor，使得后续进入 Supervisor 模式
     mstatus.set_mpp(RiscvMStatus::MPP::Supervisor);
+    // 默认不开启中断
+    mstatus.set_sie(false);
+    mstatus.set_spie(false);
     unsafe { RiscvMStatus::write(mstatus) };
 
     // 设置内核的入口
@@ -40,7 +44,9 @@ extern "C" fn init_cpu() -> ! {
     // 把所有的中断和异常都交给 Supervisor 模式处理
     let medeleg = RiscvMedeleg::Medeleg::from_bits(usize::MAX);
     unsafe { RiscvMedeleg::write(medeleg) };
-    let mideleg = RiscvMideleg::Mideleg::from_bits(usize::MAX);
+    // 有的 riscv 实现不会把 M 模式的时钟中断委托给 S 模式，所以这里就直接不委托了
+    // M 模式的时钟中断是第 7 位
+    let mideleg = RiscvMideleg::Mideleg::from_bits(usize::MAX ^ (1 << 7));
     unsafe { RiscvMideleg::write(mideleg) };
 
     // 让 Supervisor 模式能够接收到外部中断/时钟中断和软件中断
@@ -50,12 +56,17 @@ extern "C" fn init_cpu() -> ! {
     sie.set_ssoft(true);
     unsafe { RiscvSie::write(sie) };
 
-    // 初始化时钟中断
-    // TODO
+    // 允许 S 模式访问到 time 寄存器
+    let mut mcounteren = RiscvMcounteren::read();
+    mcounteren.set_tm(true);
+    unsafe { RiscvMcounteren::write(mcounteren) };
 
     // 将 cpu 的 id 写到 tp 寄存器上
     let hart_id = RiscvMhartid::read();
     unsafe { super::register::tp::write_tp(hart_id) };
+
+    // 初始化时钟中断
+    super::interrupt::init_timer(hart_id);
 
     // 跳到内核的入口，并进入 Supervisor 模式
     unsafe { core::arch::asm!("mret", options(noreturn)) };

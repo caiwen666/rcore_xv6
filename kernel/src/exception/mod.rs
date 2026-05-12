@@ -1,3 +1,5 @@
+pub mod timer;
+
 pub trait InterruptArch {
     /// 开启中断
     fn enable_interrupt();

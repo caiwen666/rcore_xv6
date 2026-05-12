@@ -1,3 +1,4 @@
+pub mod cpu;
 pub mod sifive_test;
 pub mod uart;
 pub mod virtio;
@@ -20,6 +21,7 @@ use uart::Uart;
 
 const SIFIVE_TEST_ADDR: usize = 0x100000;
 const UART0_ADDR: usize = 0x10000000;
+pub const CLINT_ADDR: usize = 0x2000000;
 const VIRTIO0_ADDR: usize = 0x10001000;
 const VIRTIO0_MMIO_SIZE: usize = 0x1000;
 /// 主内存起始地址和大小
@@ -27,7 +29,7 @@ const MAIN_MEMORY_ADDR: usize = 0x80000000;
 const MAIN_MEMORY_SIZE: usize = 1024 * 1024 * 128; // 128MB
 
 /// 物理内存区域
-pub const MEMORY_AREAS: [PhysMemoryArea; 4] = [
+pub const MEMORY_AREAS: [PhysMemoryArea; 5] = [
     PhysMemoryArea {
         name: "device_sifive_test",
         base: PhysAddr::new(SIFIVE_TEST_ADDR),
@@ -38,6 +40,12 @@ pub const MEMORY_AREAS: [PhysMemoryArea; 4] = [
         name: "device_uart0",
         base: PhysAddr::new(UART0_ADDR),
         size: 0x1000,
+        kind: PhysMemoryAreaKind::Device,
+    },
+    PhysMemoryArea {
+        name: "device_clint",
+        base: PhysAddr::new(CLINT_ADDR),
+        size: 0x10000,
         kind: PhysMemoryAreaKind::Device,
     },
     PhysMemoryArea {
