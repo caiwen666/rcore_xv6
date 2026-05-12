@@ -35,6 +35,8 @@ pub extern "C" fn kernel_main() {
         println!("{}", include_str!("logo.txt"));
         // 初始化虚拟内存
         MMArch::init();
+        // 进入内核内存空间
+        KERNEL_SPACE.lock().activate();
         KERNEL_SPACE.lock().print_info(false);
         println!("VIRTIO0: {} KB", VIRTIO0.lock().capacity() / 1024);
         let mut test_buf = [0u8; 2048];

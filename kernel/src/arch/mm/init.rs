@@ -116,7 +116,4 @@ pub fn init() {
         "kernel_phys_mem",
     );
     kernel_space.push(phys_mem_area);
-
-    // 进入内核空间
-    kernel_space.activate();
 }
