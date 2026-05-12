@@ -3,6 +3,9 @@ KERNEL = kernel
 # 产物存放的目录
 OUTPUT = target
 
+# 输出目录不存在就创建
+$(shell mkdir -p $(OUTPUT))
+
 # 工具
 QEMU = qemu-system-riscv64
 CARGO = cargo
