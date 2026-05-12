@@ -1,5 +1,7 @@
-use crate::driver::UART0;
+use crate::{driver::UART0, sync::spin::SpinMutex};
 use core::fmt::{self, Write};
+
+static GLOBAL_PRINT_LOCK: SpinMutex<()> = SpinMutex::new((), "global_print_lock");
 
 struct Stdout;
 
@@ -14,6 +16,7 @@ impl Write for Stdout {
 }
 
 pub fn print(args: fmt::Arguments) {
+    let _guard = GLOBAL_PRINT_LOCK.lock();
     Stdout.write_fmt(args).unwrap();
 }
 
