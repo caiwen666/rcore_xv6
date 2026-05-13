@@ -48,7 +48,6 @@ impl Debug for MemoryPermission {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemoryAreaType {
     /// 私有内存区域
-    #[expect(unused)]
     Private,
     /// 恒等映射。一般用于建立内核空间，不分配物理页，直接在页表中映射到物理地址
     Identical,
@@ -287,6 +286,42 @@ impl MemorySpace {
                     table = next_table;
                 }
             }
+        }
+    }
+
+    /// 取消映射一个虚拟页面
+    fn unmap(&mut self, vaddr: VirtAddr) {
+        let mut table = unsafe { self.table() };
+        loop {
+            let index = table
+                .index_of(vaddr)
+                .expect("Virtual address not in current page table");
+            if table.level() == 0 {
+                table.set(index, PTE::empty());
+            } else {
+                table = unsafe {
+                    table
+                        .next_level_table(index)
+                        .expect("Next level table not found")
+                };
+            }
+        }
+    }
+
+    /// 将从某个虚拟地址开始的内存区域移除
+    ///
+    /// # Panics
+    ///
+    /// 必须存在一个已经映射的内存区域的起始地址完全等于 `start_vaddr`，
+    /// 否则会 panic
+    pub fn remove(&mut self, start_vaddr: VirtAddr) {
+        let area = self
+            .areas
+            .remove(&start_vaddr)
+            .expect("No area found at start_vaddr");
+        for i in 0..(area.size() / MMArch::PAGE_SIZE) {
+            let vaddr = area.base_vaddr() + i * MMArch::PAGE_SIZE;
+            self.unmap(vaddr);
         }
     }
 

@@ -6,12 +6,14 @@
 #![feature(likely_unlikely)]
 
 use crate::{
-    arch::MMArch,
+    arch::{IrqArch, MMArch},
     driver::VIRTIO0,
+    exception::{InterruptArch, timer::timer_tickets},
     mm::{KERNEL_SPACE, MemoryManagementArch, allocator::kernel::KernelAllocator},
-    process::cpu::CPUManager,
+    process::{ProcessManager, cpu::CPUManager, kthread::{exit_kthread, spawn_kthread}, schedule::schedule_loop},
 };
 use alloc::string::String;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 mod arch;
 mod console;
@@ -21,6 +23,7 @@ mod lang_items;
 mod mm;
 mod process;
 mod sync;
+mod utils;
 
 extern crate alloc;
 
@@ -30,26 +33,84 @@ pub static KERNEL_ALLOCATOR: KernelAllocator = KernelAllocator;
 /// 内核的入口函数
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() {
+    static STARTED: AtomicBool = AtomicBool::new(false);
     // SAFETY: 此时中断还没开
-    if unsafe { CPUManager::current_cpu().id } == 0 {
+    let cpu = unsafe { CPUManager::current_cpu() };
+    if cpu.id == 0 {
         println!("{}", include_str!("logo.txt"));
         // 初始化虚拟内存
         MMArch::init();
         // 进入内核内存空间
         KERNEL_SPACE.lock().activate();
         KERNEL_SPACE.lock().print_info(false);
-        println!("VIRTIO0: {} KB", VIRTIO0.lock().capacity() / 1024);
-        let mut test_buf = [0u8; 2048];
-        for i in 0..4 {
-            VIRTIO0
-                .lock()
-                .read_block_sync(i, &mut test_buf[i * 512..(i + 1) * 512]);
+        // 初始化内核进程
+        ProcessManager::init();
+        // 初始化中断
+        IrqArch::init();
+        // 启动第一个内核线程，继续完成后续初始化
+        spawn_kthread(kthread_main);
+        spawn_kthread(kthread_test);
+        STARTED.store(true, Ordering::Release);
+    } else {
+        while !STARTED.load(Ordering::Acquire) {
+            core::hint::spin_loop();
         }
-        let s = String::from_utf8_lossy(&test_buf);
-        println!("{}", s);
-        driver::SIFIVE_TEST.shutdown(driver::sifive_test::ShutdownReason::Normal, 0);
+        KERNEL_SPACE.lock().activate();
+        IrqArch::init();
+        println!("CPU {} is ready", cpu.id);
     }
+    // SAFETY: 当前尚未开启中断
+    unsafe { schedule_loop() };
+}
+
+/// 第一个内核线程
+pub fn kthread_main() -> ! {
+    let task = CPUManager::current_task().expect("kthread_main: current_task is None");
+    let mut last: Option<usize> = None;
+    println!("hello, world! {}", task.id);
     loop {
-        core::hint::spin_loop();
+        let t = timer_tickets();
+        if let Some(prev) = last {
+            if t - prev == 100 {
+                println!("thread {} timer_tickets = {}", task.id, t);
+                last = Some(t);
+            }
+        } else {
+            last = Some(t);
+        }
+        if t > 300 {
+            break;
+        }
     }
+    println!("VIRTIO0: {} KB", VIRTIO0.lock().capacity() / 1024);
+    let mut test_buf = [0u8; 2048];
+    for i in 0..4 {
+        VIRTIO0
+            .lock()
+            .read_block_sync(i, &mut test_buf[i * 512..(i + 1) * 512]);
+    }
+    let s = String::from_utf8_lossy(&test_buf);
+    println!("{}", s);
+    driver::SIFIVE_TEST.shutdown(driver::sifive_test::ShutdownReason::Normal, 0);
+}
+
+pub fn kthread_test() -> ! {
+    let task = CPUManager::current_task().expect("kthread_main: current_task is None");
+    let mut last: Option<usize> = None;
+    println!("hello, world! {}", task.id);
+    loop {
+        let t = timer_tickets();
+        if let Some(prev) = last {
+            if t - prev == 60 {
+                println!("thread {} timer_tickets = {}", task.id, t);
+                last = Some(t);
+            }
+        } else {
+            last = Some(t);
+        }
+        if t > 500 {
+            break;
+        }
+    }
+    exit_kthread();
 }

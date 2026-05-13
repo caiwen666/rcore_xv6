@@ -28,6 +28,12 @@ pub trait MemoryManagementArch {
     /// 例如 PAGE_ENTRY_COUNT_SHIFT = 9 表示每个页表有 512 个页表项
     const PTE_COUNT_SHIFT: usize;
 
+    /// 跳板占了多少个页面
+    const TRAMPOLINE_PAGE_COUNT: usize;
+
+    /// 虚拟地址有多少位
+    const VADDR_BITS_COUNT: usize;
+
     /// 页面大小
     const PAGE_SIZE: usize = 1 << Self::PAGE_SIZE_SHIFT;
     /// 页表项大小

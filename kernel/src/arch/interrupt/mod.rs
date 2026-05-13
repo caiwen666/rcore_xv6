@@ -1,3 +1,6 @@
+mod context;
+mod handler;
+
 use crate::{
     driver::{
         CLINT_ADDR,
@@ -5,13 +8,15 @@ use crate::{
     },
     exception::{InterruptArch, timer::TIMER_INTERVAL},
 };
-use riscv::register::{mie, mscratch, mstatus, mtvec, sstatus};
+use riscv::register::{mie, mscratch, mstatus, mtvec, sstatus, stvec};
 
 core::arch::global_asm!(include_str!("timer.S"));
 
 pub struct RiscV64InterruptArch;
 
 impl InterruptArch for RiscV64InterruptArch {
+    type TaskContext = context::TaskContext;
+
     #[inline]
     fn enable_interrupt() {
         let mut status = sstatus::read();
@@ -30,6 +35,25 @@ impl InterruptArch for RiscV64InterruptArch {
     fn get_interrupt_state() -> bool {
         let status = sstatus::read();
         status.sie()
+    }
+
+    #[inline]
+    fn init() {
+        unsafe extern "C" {
+            fn trap_from_kernel();
+        }
+        let mut reg = stvec::read();
+        reg.set_trap_mode(stvec::TrapMode::Direct);
+        reg.set_address(trap_from_kernel as *const () as usize);
+        unsafe { stvec::write(reg) };
+    }
+
+    #[inline]
+    fn switch_context(
+        current_context: *mut Self::TaskContext,
+        next_context: *mut Self::TaskContext,
+    ) {
+        context::switch_context(current_context, next_context);
     }
 }
 

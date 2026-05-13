@@ -1,57 +1,15 @@
 use crate::{arch::IrqArch, exception::InterruptArch, process::cpu::CPUManager};
 use core::{
-    cell::{Cell, UnsafeCell},
+    cell::UnsafeCell,
     fmt,
     ops::{Deref, DerefMut},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
-
-/// 挂在 CPU 上的，表示当前 CPU 上面的自旋锁的状态。
-pub struct SpinState {
-    /// 自旋锁的数量
-    pub count: usize,
-    /// 在加自旋锁之前，是否关闭了中断
-    pub interrupted: bool,
-}
-
-impl SpinState {
-    pub const fn new() -> Self {
-        Self {
-            count: 0,
-            interrupted: false,
-        }
-    }
-
-    pub fn push_lock(&mut self, old_state: bool) {
-        if self.count == 0 {
-            self.interrupted = old_state;
-        }
-        self.count += 1;
-    }
-
-    /// # Returns
-    ///
-    /// 返回一个 bool，表示是否需要开启中断
-    ///
-    /// # Panics
-    ///
-    /// - 当前不能开启中断，否则会 panic
-    /// - 当前 CPU 上面必须已经施加过自旋锁，否则会 panic
-    pub fn pop_lock(&mut self) -> bool {
-        assert!(
-            !IrqArch::get_interrupt_state(),
-            "release a lock that is not acquired"
-        );
-        assert!(self.count > 0, "release a lock that is not acquired");
-        self.count -= 1;
-        self.count == 0 && self.interrupted
-    }
-}
 
 pub struct SpinMutex<T: ?Sized> {
     lock: AtomicBool,
-    // 当前锁被哪个 CPU 持有，用于死锁检测
-    cpu_id: Cell<Option<usize>>,
+    // 当前锁被哪个 CPU 持有，用于死锁检测，usize::MAX 表示没有 CPU 持有
+    owner_hart: AtomicUsize,
     // 锁的名称，用于死锁检测时显示
     name: &'static str,
     inner: UnsafeCell<T>,
@@ -62,6 +20,7 @@ unsafe impl<T: ?Sized + Send> Sync for SpinMutex<T> {}
 
 pub struct SpinMutexGuard<'a, T: ?Sized + 'a> {
     lock: &'a SpinMutex<T>,
+    leaked: bool,
 }
 
 impl<T: ?Sized> !Send for SpinMutexGuard<'_, T> {}
@@ -72,7 +31,7 @@ impl<T> SpinMutex<T> {
         Self {
             lock: AtomicBool::new(false),
             inner: UnsafeCell::new(inner),
-            cpu_id: Cell::new(None),
+            owner_hart: AtomicUsize::new(usize::MAX),
             name,
         }
     }
@@ -85,7 +44,10 @@ impl<T: ?Sized> SpinMutex<T> {
             .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
-            Some(SpinMutexGuard { lock: self })
+            Some(SpinMutexGuard {
+                lock: self,
+                leaked: false,
+            })
         } else {
             None
         }
@@ -107,7 +69,7 @@ impl<T: ?Sized> SpinMutex<T> {
         }
         loop {
             if let Some(guard) = self.try_lock_weak() {
-                self.cpu_id.set(Some(cpu.id));
+                self.owner_hart.store(cpu.id, Ordering::Relaxed);
                 break guard;
             }
 
@@ -117,11 +79,14 @@ impl<T: ?Sized> SpinMutex<T> {
         }
     }
 
-    pub fn unlock(&self) {
+    /// # Safety
+    ///
+    /// 调用者需要确保自己当前是关中断的，并且拥有 SpinMutexGuard
+    pub unsafe fn unlock(&self) {
         if core::hint::unlikely(!unsafe { self.check_holding() }) {
             panic!("unlock a lock that is not held: {}", self.name);
         }
-        self.cpu_id.set(None);
+        self.owner_hart.store(usize::MAX, Ordering::Relaxed);
         self.lock.store(false, Ordering::Release);
         // SAFETY: 此时还处于中断关闭期中
         let cpu = unsafe { CPUManager::current_cpu() };
@@ -136,9 +101,20 @@ impl<T: ?Sized> SpinMutex<T> {
     ///
     /// 调用时需要保证中断关闭
     unsafe fn check_holding(&self) -> bool {
-        self.cpu_id
-            .get()
-            .is_some_and(|cpu_id| cpu_id == unsafe { CPUManager::current_cpu().id })
+        // SAFETY: 调用者保证了此时中断关闭
+        let cpu = unsafe { CPUManager::current_cpu() };
+        self.owner_hart.load(Ordering::Relaxed) == cpu.id
+    }
+}
+
+impl<T: ?Sized> SpinMutexGuard<'_, T> {
+    /// 将 SpinMutexGuard 释放，使其在 drop 时不会被自动解锁
+    ///
+    /// # Safety
+    ///
+    /// 调用者需要确保在调用该函数之后，自己手动释放锁
+    pub unsafe fn leak(&mut self) {
+        self.leaked = true;
     }
 }
 
@@ -158,7 +134,9 @@ impl<T: ?Sized> DerefMut for SpinMutexGuard<'_, T> {
 
 impl<T: ?Sized> Drop for SpinMutexGuard<'_, T> {
     fn drop(&mut self) {
-        self.lock.unlock()
+        if !self.leaked {
+            unsafe { self.lock.unlock() }
+        }
     }
 }
 

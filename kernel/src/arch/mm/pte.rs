@@ -56,6 +56,10 @@ impl PageTableEntry for Sv39PTE {
         }
     }
 
+    fn empty() -> Self {
+        Sv39PTE { bits: 0 }
+    }
+
     fn is_valid(&self) -> bool {
         self.flags().contains(Sv39PTEFlags::V)
     }

@@ -19,6 +19,11 @@ impl MemoryManagementArch for RiscV64MMArch {
     const PAGE_LEVELS: usize = 3;
     /// 每个页表的页表项数量为 512
     const PTE_COUNT_SHIFT: usize = 9;
+    /// 跳板占了 1 个页面
+    const TRAMPOLINE_PAGE_COUNT: usize = 1;
+    /// 虚拟内存地址有 39 位，但是 SV39 要求第 39 位 (1-base) 为 1 的时候剩余高位必须都为 1
+    /// 为了简单起见我们只用 38 位
+    const VADDR_BITS_COUNT: usize = 38;
 
     fn init() {
         init::init();

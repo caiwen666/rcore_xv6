@@ -15,6 +15,8 @@ pub trait PageTableEntry: Clone + Copy + 'static {
     ///
     /// `is_user` 表示是否为用户态的
     fn new_non_leaf(paddr: PhysAddr, is_user: bool) -> Self;
+    /// 空白页表项
+    fn empty() -> Self;
     /// 页表项是否有效
     fn is_valid(&self) -> bool;
     /// 获取页表项指向的物理地址
