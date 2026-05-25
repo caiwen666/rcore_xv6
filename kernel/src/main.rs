@@ -11,7 +11,12 @@ use crate::{
     driver::{UART0, VIRTIO0, enable_plic, init_plic},
     exception::{InterruptArch, timer::timer_tickets},
     mm::{KERNEL_SPACE, MemoryManagementArch, allocator::kernel::KernelAllocator},
-    process::{ProcessManager, cpu::CPUManager, kthread::{exit_kthread, spawn_kthread}, schedule::schedule_loop},
+    process::{
+        ProcessManager,
+        cpu::CPUManager,
+        kthread::{exit_kthread, spawn_kthread},
+        schedule::schedule_loop,
+    },
 };
 use alloc::{boxed::Box, string::String, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};

@@ -1,6 +1,12 @@
 mod interface;
 
-use crate::{sync::{condvar::Condvar, spin::{SpinMutex, SpinMutexGuard}}, utils::RingBuffer};
+use crate::{
+    sync::{
+        condvar::Condvar,
+        spin::{SpinMutex, SpinMutexGuard},
+    },
+    utils::RingBuffer,
+};
 use interface::{UartFIFO, UartInterface, UartInterrupt};
 
 const BUF_SIZE: usize = 512;
@@ -8,7 +14,7 @@ const BUF_SIZE: usize = 512;
 pub struct Uart {
     interface: UartInterface,
     buf: SpinMutex<RingBuffer<u8, BUF_SIZE>>,
-    condvar: Condvar
+    condvar: Condvar,
 }
 
 impl Uart {
@@ -45,7 +51,7 @@ impl Uart {
     }
 
     /// 输出一个字节
-    /// 
+    ///
     /// 该函数会一直阻塞等待，直到数据被成功输出为止。
     pub fn put_sync(&self, ch: u8) {
         let _guard = self.buf.lock();
@@ -58,11 +64,11 @@ impl Uart {
     }
 
     /// 输出一个字节
-    /// 
+    ///
     /// 字节不会立刻输出，而是会先放入内核的缓冲区中。如果缓冲区满，则当前线程会被挂起。
-    /// 
+    ///
     /// # Panic
-    /// 
+    ///
     /// 必须在线程中调用该函数，否则会 panic
     pub fn put(&self, ch: u8) {
         let mut buf = self.buf.lock();
@@ -91,7 +97,7 @@ impl Uart {
     }
 
     /// 处理中断
-    /// 
+    ///
     /// 当 UART 可以发送数据，或是接收到了数据时，会调用触发中断
     pub fn handle_interrupt(&self) {
         let buf = self.buf.lock();

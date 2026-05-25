@@ -1,17 +1,22 @@
 pub mod cpu;
+pub mod plic;
 pub mod sifive_test;
 pub mod uart;
 pub mod virtio;
-pub mod plic;
 
 use crate::{
-    driver::{plic::PLIC, virtio::{
-        device::blk::VirtIOBlk,
-        transport::{
-            DeviceType, Transport,
-            mmio::{MmioTransport, MmioVersion, VirtIOHeader},
+    driver::{
+        plic::PLIC,
+        virtio::{
+            device::blk::VirtIOBlk,
+            transport::{
+                DeviceType, Transport,
+                mmio::{MmioTransport, MmioVersion, VirtIOHeader},
+            },
         },
-    }}, mm::{PhysMemoryArea, PhysMemoryAreaKind, address::PhysAddr}, process::cpu::CPUManager
+    },
+    mm::{PhysMemoryArea, PhysMemoryAreaKind, address::PhysAddr},
+    process::cpu::CPUManager,
 };
 use core::ptr::NonNull;
 use lazy_static::lazy_static;
@@ -91,7 +96,7 @@ lazy_static! {
         if transport.vendor_id() != 0x554d4551 {
             panic!("VIRTIO0: Unsupported vendor ID: 0x{:X}", transport.vendor_id());
         }
-        
+
         VirtIOBlk::new(transport)
     };
 }
@@ -112,7 +117,7 @@ pub fn enable_plic(cpu_id: usize) {
 }
 
 /// # SAFETY
-/// 
+///
 /// 调用该函数的时候需要保证中断关闭
 pub unsafe fn plic_handler() {
     let cpu = unsafe { CPUManager::current_cpu() };

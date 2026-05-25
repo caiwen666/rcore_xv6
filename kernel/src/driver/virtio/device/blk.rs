@@ -1,7 +1,11 @@
-use crate::{driver::virtio::{
-    queue::{DescFlags, Descriptor, VirtQueue},
-    transport::Transport,
-}, mm::{KERNEL_SPACE, address::VirtAddr}, sync::{condvar::Condvar, spin::SpinMutex}};
+use crate::{
+    driver::virtio::{
+        queue::{DescFlags, Descriptor, VirtQueue},
+        transport::Transport,
+    },
+    mm::{KERNEL_SPACE, address::VirtAddr},
+    sync::{condvar::Condvar, spin::SpinMutex},
+};
 use alloc::{boxed::Box, collections::btree_map::BTreeMap};
 use bitflags::bitflags;
 use core::mem::offset_of;
@@ -95,11 +99,11 @@ enum ReqType {
 pub struct VirtIOBlk<T: Transport> {
     transport: SpinMutex<T>,
     // 我们约定使用 transport 时和 requests 时需要同时持有 queue 的锁
-    // 
+    //
     // 所以 transport 和 requests 的锁其实是没必要的
     // transport 和 requests 上面还是要有锁是因为我们仍然希望能在不可变
     // 引用 VirtIOBlk 的情况下可变引用 transport 和 requests
-    // 
+    //
     // 我们这么做的原因是 rust 的 borrow checker 有点难搞
     queue: SpinMutex<VirtQueue<{ QUEUE_SIZE as usize }>>,
     condvar: Condvar,
@@ -151,16 +155,16 @@ impl<T: Transport> VirtIOBlk<T> {
     }
 
     /// 读取一个块的数据到 `buf` 中，并将当前线程挂起，直到数据读取完成
-    /// 
+    ///
     /// # Preconditions
-    /// 
+    ///
     /// `buf` 对应的内存地址必须满足虚拟内存地址和物理内存地址一致，并且
     /// 在物理内存中是连续的。否则可能会导致未定义行为。
-    /// 
+    ///
     /// 为了满足这个条件，可以把 buf 分配到内核的堆上。
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// - `buf` 的长度必须为一个扇区大小，即 512 字节，否则会 panic
     /// - 必须在线程中调用该函数，否则会 panic
     pub fn read_block(&self, block_id: usize, buf: &mut [u8]) {
@@ -181,7 +185,15 @@ impl<T: Transport> VirtIOBlk<T> {
         let mut queue = self.queue.lock();
         queue.write_descriptor(
             desc_idx3,
-            Descriptor::new(KERNEL_SPACE.lock().translate_vaddr(VirtAddr::from_ref(&status)).inner() as u64, 1, DescFlags::WRITE, 0),
+            Descriptor::new(
+                KERNEL_SPACE
+                    .lock()
+                    .translate_vaddr(VirtAddr::from_ref(&status))
+                    .inner() as u64,
+                1,
+                DescFlags::WRITE,
+                0,
+            ),
         );
         queue.write_descriptor(
             desc_idx2,
@@ -209,7 +221,9 @@ impl<T: Transport> VirtIOBlk<T> {
         // 所以这里将 request_condvar 泄露掉，同时强制对 requests 解锁
         // 但此时我们还持有对 request_condvar 的引用，此时就会存在一个竞争
         // 但我们现在仍持有 queue 锁，所以是安全的
-        unsafe { requests.leak(); }
+        unsafe {
+            requests.leak();
+        }
         let request_condvar = requests.entry(desc_idx1).or_insert(Condvar::new());
         unsafe { self.requests.unlock() };
         // 我们后面用不到 queue，不需要再拿回锁
@@ -225,11 +239,11 @@ impl<T: Transport> VirtIOBlk<T> {
         let mut queue = self.queue.lock();
         // VirtIO 只有在我们应答中断之后才会继续发新的中断
         // 应答中断并不意味着完成中断处理
-        // 
+        //
         // 我们应该先应答中断而不是在最后应答中断，不然可能出现：在我们处理完所有完成的请求
         // 到完成中断应答过程中，磁盘又完成了新的请求，但是由于我们还没有应答中断，导致该
         // 请求的完成没有触发中断，从而导致该请求的完成并没有被我们及时处理
-        // 
+        //
         // 如果我们先应答中断，再处理完成的请求，那么可能在我们处理到一半的时候又有新的请求
         // 到来了，于是我们就会继续处理。唯一带来的不太好的地方是，我们相当于是在当前中断
         // 处理过程中把后续中断要处理的请求给处理了，那么后续的中断可能没有处理任何请求。
@@ -237,7 +251,11 @@ impl<T: Transport> VirtIOBlk<T> {
         self.transport.lock().ack_interrupt();
         while let Some(desc_idx) = queue.recycle_descriptor() {
             self.condvar.notify_all();
-            self.requests.lock().get(&desc_idx).expect("VirtIOBlk: request not found").notify_all();
+            self.requests
+                .lock()
+                .get(&desc_idx)
+                .expect("VirtIOBlk: request not found")
+                .notify_all();
         }
     }
 }

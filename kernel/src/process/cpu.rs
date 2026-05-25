@@ -8,8 +8,8 @@ use crate::{
         task::{TaskControlBlock, TaskStatus},
     },
 };
-use core::cell::UnsafeCell;
 use alloc::sync::Arc;
+use core::cell::UnsafeCell;
 use lazy_static::lazy_static;
 
 /// 挂在 CPU 上的，表示当前 CPU 上面的自旋锁的状态。

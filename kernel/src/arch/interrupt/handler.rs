@@ -1,6 +1,9 @@
 use super::RiscV64InterruptArch;
 use crate::{
-    arch::register::scause::{Exception, Interrupt}, driver::plic_handler, exception::{InterruptArch, timer::timer_handler}, println
+    arch::register::scause::{Exception, Interrupt},
+    driver::plic_handler,
+    exception::{InterruptArch, timer::timer_handler},
+    println,
 };
 use riscv::register::{scause, sepc, sip, sstatus, stval};
 

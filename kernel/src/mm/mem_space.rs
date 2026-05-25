@@ -337,7 +337,9 @@ impl MemorySpace {
                 return table.get(index).paddr() + page_offset;
             } else {
                 table = unsafe {
-                    table.next_level_table(index).expect("Next level table not found")
+                    table
+                        .next_level_table(index)
+                        .expect("Next level table not found")
                 }
             }
         }

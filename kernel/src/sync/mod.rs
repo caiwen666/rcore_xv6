@@ -1,2 +1,2 @@
-pub mod spin;
 pub mod condvar;
+pub mod spin;

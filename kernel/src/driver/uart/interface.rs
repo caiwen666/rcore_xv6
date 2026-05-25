@@ -141,9 +141,9 @@ impl UartInterface {
     }
 
     /// 发送一个字节
-    /// 
+    ///
     /// # Preconditions
-    /// 
+    ///
     /// 必须确保 UART 可以发送数据，即 [Self::tx_idle()] 为 true，
     /// 才能调用该函数，否则会出现未定义行为
     pub fn put(&self, ch: u8) {

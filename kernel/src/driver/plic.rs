@@ -42,6 +42,8 @@ impl PLIC {
     /// 告诉 PLIC 某个中断已经处理完毕
     pub fn complete_interrupt(&self, cpu_id: usize, irq: u32) {
         let addr = self.base_addr + 0x201004 + cpu_id * 0x2000;
-        unsafe { core::ptr::write_volatile(addr as *mut u32, irq); }
+        unsafe {
+            core::ptr::write_volatile(addr as *mut u32, irq);
+        }
     }
 }
