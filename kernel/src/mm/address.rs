@@ -57,6 +57,11 @@ impl VirtAddr {
         Self(addr)
     }
 
+    /// 从引用创建虚拟地址
+    pub fn from_ref<T>(r: &T) -> Self {
+        Self(r as *const T as usize)
+    }
+
     /// 检查是否满足对齐要求
     ///
     /// # Parameters

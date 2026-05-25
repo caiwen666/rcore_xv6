@@ -108,7 +108,6 @@ pub trait Transport {
     fn queue_set(&mut self, queue: u16, size: u32, descriptors: PhysAddr);
 
     /// 应答中断
-    #[expect(unused)]
     fn ack_interrupt(&mut self) -> InterruptStatus;
 
     fn begin_init<F: Flags<Bits = u64> + BitAnd<Output = F>>(

@@ -4,6 +4,7 @@
 #![no_main]
 #![feature(negative_impls)]
 #![feature(likely_unlikely)]
+#![feature(box_as_ptr)]
 
 use crate::{
     arch::{IrqArch, MMArch},
@@ -12,7 +13,7 @@ use crate::{
     mm::{KERNEL_SPACE, MemoryManagementArch, allocator::kernel::KernelAllocator},
     process::{ProcessManager, cpu::CPUManager, kthread::{exit_kthread, spawn_kthread}, schedule::schedule_loop},
 };
-use alloc::string::String;
+use alloc::{boxed::Box, string::String, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 mod arch;
@@ -87,16 +88,16 @@ pub fn kthread_main() -> ! {
             break;
         }
     }
-    println!("VIRTIO0: {} KB", VIRTIO0.lock().capacity() / 1024);
-    let mut test_buf = [0u8; 2048];
+    println!("VIRTIO0: {} KB", VIRTIO0.capacity() / 1024);
+    let mut text_bytes = Vec::with_capacity(2048);
+    let mut test_buf = Box::new([0u8; 512]);
     for i in 0..4 {
-        VIRTIO0
-            .lock()
-            .read_block_sync(i, &mut test_buf[i * 512..(i + 1) * 512]);
+        VIRTIO0.read_block(i, test_buf.as_mut_slice());
+        text_bytes.extend_from_slice(test_buf.as_ref());
     }
-    let s = String::from_utf8_lossy(&test_buf);
+    let s = String::from_utf8_lossy(text_bytes.as_slice());
     println!("{}", s);
-    driver::SIFIVE_TEST.shutdown(driver::sifive_test::ShutdownReason::Normal, 0);
+    exit_kthread();
 }
 
 pub fn kthread_test() -> ! {

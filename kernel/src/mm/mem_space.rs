@@ -325,6 +325,24 @@ impl MemorySpace {
         }
     }
 
+    /// 将当前内存空间的虚拟地址翻译成物理地址
+    pub fn translate_vaddr(&self, vaddr: VirtAddr) -> PhysAddr {
+        let mut table = unsafe { self.table() };
+        loop {
+            let index = table
+                .index_of(vaddr)
+                .expect("Virtual address not in current page table");
+            if table.level() == 0 {
+                let page_offset = vaddr.inner() & (MMArch::PAGE_SIZE - 1);
+                return table.get(index).paddr() + page_offset;
+            } else {
+                table = unsafe {
+                    table.next_level_table(index).expect("Next level table not found")
+                }
+            }
+        }
+    }
+
     /// 打印当前内存空间的情况
     pub fn print_info(&self, show_page_table_frames: bool) {
         println!("Kind: {:?}", self.kind);

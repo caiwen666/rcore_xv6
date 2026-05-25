@@ -11,7 +11,7 @@ use crate::{
             DeviceType, Transport,
             mmio::{MmioTransport, MmioVersion, VirtIOHeader},
         },
-    }}, mm::{PhysMemoryArea, PhysMemoryAreaKind, address::PhysAddr}, process::cpu::CPUManager, sync::spin::SpinMutex
+    }}, mm::{PhysMemoryArea, PhysMemoryAreaKind, address::PhysAddr}, process::cpu::CPUManager
 };
 use core::ptr::NonNull;
 use lazy_static::lazy_static;
@@ -74,7 +74,7 @@ lazy_static! {
 pub static PLIC_INSTANCE: PLIC = PLIC::new(PLIC_ADDR);
 pub static SIFIVE_TEST: SiFiveTest = SiFiveTest::new(SIFIVE_TEST_ADDR);
 lazy_static! {
-    pub static ref VIRTIO0: SpinMutex<VirtIOBlk<MmioTransport<'static>>> = {
+    pub static ref VIRTIO0: VirtIOBlk<MmioTransport<'static>> = {
         // SAFETY: 我们只对 VIRTIO0 建立一次 Transport 实例，并且 VIRTIO0 一直存在。
         let transport = unsafe {
             MmioTransport::new(
@@ -91,21 +91,23 @@ lazy_static! {
         if transport.vendor_id() != 0x554d4551 {
             panic!("VIRTIO0: Unsupported vendor ID: 0x{:X}", transport.vendor_id());
         }
-        let virtio_blk = VirtIOBlk::new(transport);
-        SpinMutex::new(virtio_blk, "VIRTIO0")
+        
+        VirtIOBlk::new(transport)
     };
 }
 
 pub const UART0_IRQ: u32 = 10;
+pub const VIRTIO0_IRQ: u32 = 1;
 
 /// 初始化 PLIC
 pub fn init_plic() {
     PLIC_INSTANCE.set_priority(UART0_IRQ, 1);
+    PLIC_INSTANCE.set_priority(VIRTIO0_IRQ, 1);
 }
 
 /// 为指定 CPU 启用 PLIC 中断
 pub fn enable_plic(cpu_id: usize) {
-    PLIC_INSTANCE.set_supervisor_enable(cpu_id, 1 << UART0_IRQ);
+    PLIC_INSTANCE.set_supervisor_enable(cpu_id, 1 << UART0_IRQ | 1 << VIRTIO0_IRQ);
     PLIC_INSTANCE.set_supervisor_threshold(cpu_id, 0);
 }
 
@@ -124,6 +126,9 @@ pub unsafe fn plic_handler() {
     match irq {
         UART0_IRQ => {
             UART0.handle_interrupt();
+        }
+        VIRTIO0_IRQ => {
+            VIRTIO0.handle_interrupt();
         }
         _ => {
             panic!("Unknown PLIC interrupt: {}", irq);
