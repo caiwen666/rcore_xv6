@@ -7,7 +7,7 @@
 
 use crate::{
     arch::{IrqArch, MMArch},
-    driver::VIRTIO0,
+    driver::{UART0, VIRTIO0, enable_plic, init_plic},
     exception::{InterruptArch, timer::timer_tickets},
     mm::{KERNEL_SPACE, MemoryManagementArch, allocator::kernel::KernelAllocator},
     process::{ProcessManager, cpu::CPUManager, kthread::{exit_kthread, spawn_kthread}, schedule::schedule_loop},
@@ -47,6 +47,10 @@ pub extern "C" fn kernel_main() {
         ProcessManager::init();
         // 初始化中断
         IrqArch::init();
+        // 初始化 PLIC
+        init_plic();
+        // 为当前 CPU 启用 PLIC 中断
+        enable_plic(cpu.id);
         // 启动第一个内核线程，继续完成后续初始化
         spawn_kthread(kthread_main);
         spawn_kthread(kthread_test);
@@ -57,6 +61,7 @@ pub extern "C" fn kernel_main() {
         }
         KERNEL_SPACE.lock().activate();
         IrqArch::init();
+        enable_plic(cpu.id);
         println!("CPU {} is ready", cpu.id);
     }
     // SAFETY: 当前尚未开启中断
@@ -108,9 +113,12 @@ pub fn kthread_test() -> ! {
         } else {
             last = Some(t);
         }
-        if t > 500 {
+        if t > 200 {
             break;
         }
+    }
+    for _ in 0..1000 {
+        UART0.put(b'X');
     }
     exit_kthread();
 }

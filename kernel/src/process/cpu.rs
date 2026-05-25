@@ -1,5 +1,3 @@
-use core::cell::UnsafeCell;
-
 use crate::{
     arch::{self, IrqArch},
     driver::cpu::MAX_CPU_COUNT,
@@ -10,6 +8,7 @@ use crate::{
         task::{TaskControlBlock, TaskStatus},
     },
 };
+use core::cell::UnsafeCell;
 use alloc::sync::Arc;
 use lazy_static::lazy_static;
 

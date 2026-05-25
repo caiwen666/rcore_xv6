@@ -118,6 +118,15 @@ impl<T: ?Sized> SpinMutexGuard<'_, T> {
     }
 }
 
+impl<T: ?Sized> SpinMutexGuard<'_, T> {
+    /// 获取 SpinMutexGuard 对应的 SpinMutex
+    /// 
+    /// 主要用于 Condvar
+    pub(super) fn lock(&self) -> &SpinMutex<T> {
+        self.lock
+    }
+}
+
 impl<T: ?Sized> Deref for SpinMutexGuard<'_, T> {
     type Target = T;
 

@@ -7,9 +7,8 @@ struct Stdout;
 
 impl Write for Stdout {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        let uart = UART0.lock();
         for c in s.chars() {
-            uart.put(c as u8);
+            UART0.put_sync(c as u8);
         }
         Ok(())
     }

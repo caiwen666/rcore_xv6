@@ -1,9 +1,6 @@
 use super::RiscV64InterruptArch;
 use crate::{
-    arch::register::scause::{Exception, Interrupt},
-    // driver::plic_handler,
-    exception::{InterruptArch, timer::timer_handler},
-    println,
+    arch::register::scause::{Exception, Interrupt}, driver::plic_handler, exception::{InterruptArch, timer::timer_handler}, println
 };
 use riscv::register::{scause, sepc, sip, sstatus, stval};
 
@@ -30,7 +27,7 @@ unsafe extern "C" fn kernel_trap_handler() {
         scause::Trap::Interrupt(code) => match Interrupt::from(code) {
             Interrupt::SupervisorExternal => {
                 // 来自 PLIC 的中断
-                // TODO
+                unsafe { plic_handler() };
             }
             Interrupt::SupervisorSoft => {
                 // M 模式将时钟中断以软件中断的方式转发到 S 模式

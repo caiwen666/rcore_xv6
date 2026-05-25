@@ -16,7 +16,6 @@ pub enum TaskStatus {
     /// 正在运行
     Running,
     /// 正在堵塞
-    #[expect(unused)]
     Blocked,
 }
 
