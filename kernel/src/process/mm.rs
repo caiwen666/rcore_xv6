@@ -11,7 +11,7 @@ use crate::{
 use lazy_static::lazy_static;
 
 /// 内核栈大小，单位为页面
-const KERNEL_STACK_SIZE: usize = 2;
+const KERNEL_STACK_SIZE: usize = 4;
 
 pub struct KernelStack {
     id: usize,

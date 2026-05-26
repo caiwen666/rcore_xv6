@@ -10,6 +10,10 @@ use crate::{
     arch::{IrqArch, MMArch},
     driver::{UART0, VIRTIO0, enable_plic, init_plic},
     exception::{InterruptArch, timer::timer_tickets},
+    fs::{
+        ROOT_FS,
+        vfs::{IndexNode, lookup},
+    },
     mm::{KERNEL_SPACE, MemoryManagementArch, allocator::kernel::KernelAllocator},
     process::{
         ProcessManager,
@@ -18,13 +22,14 @@ use crate::{
         schedule::schedule_loop,
     },
 };
-use alloc::{boxed::Box, string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 mod arch;
 mod console;
 mod driver;
 mod exception;
+mod fs;
 mod lang_items;
 mod mm;
 mod process;
@@ -43,7 +48,7 @@ pub extern "C" fn kernel_main() {
     // SAFETY: 此时中断还没开
     let cpu = unsafe { CPUManager::current_cpu() };
     if cpu.id == 0 {
-        println!("{}", include_str!("logo.txt"));
+        println!("rcore_xv6 kernel is booting");
         // 初始化虚拟内存
         MMArch::init();
         // 进入内核内存空间
@@ -59,7 +64,6 @@ pub extern "C" fn kernel_main() {
         enable_plic(cpu.id);
         // 启动第一个内核线程，继续完成后续初始化
         spawn_kthread(kthread_main);
-        spawn_kthread(kthread_test);
         STARTED.store(true, Ordering::Release);
     } else {
         while !STARTED.load(Ordering::Acquire) {
@@ -76,6 +80,18 @@ pub extern "C" fn kernel_main() {
 
 /// 第一个内核线程
 pub fn kthread_main() -> ! {
+    // 打印 LOGO，顺带调用 ROOT_FS 完成根文件系统的初始化
+    println!("{:?}", ROOT_FS.root().list());
+    let logo = lookup(ROOT_FS.root(), "logo.txt");
+    if let Some(logo) = logo {
+        let mut buf = vec![0u8; logo.metadata().size];
+        logo.read_at(0, &mut buf);
+        let s = String::from_utf8_lossy(buf.as_slice());
+        println!("{}", s);
+    } else {
+        println!("logo.txt not found");
+    }
+    spawn_kthread(kthread_test);
     let task = CPUManager::current_task().expect("kthread_main: current_task is None");
     let mut last: Option<usize> = None;
     println!("hello, world! {}", task.id);
