@@ -2,6 +2,7 @@ use crate::{
     process::{
         KERNEL_PROCESS,
         context::{ArchTaskContext, TaskContext},
+        kthread::KthreadEntryCell,
         mm::{KernelStack, KernelStackAllocator},
         process::ProcessControlBlock,
     },
@@ -24,8 +25,12 @@ pub struct TaskControlBlock {
     #[expect(unused)]
     pub kstack: KernelStack,
     pub id: usize,
-    /// 如果该任务为一个内核线程，则该字段为 Some，表示内核线程的入口
-    pub kthread_entry: Option<fn() -> !>,
+    /// 内核线程的入口函数
+    ///
+    /// 入口闭包会先被**暂存**到这里；当前 task 首次进入 `task_entry` 时，会通过
+    /// `take()` 将闭包的**所有权**取出并执行。取出后 cell 内部会变为 `None`，因此
+    /// 不能通过 `take()` 的返回值是否为 `Some` 来长期判断该 task 是否为内核线程。
+    pub kthread_entry: KthreadEntryCell,
     inner: SpinMutex<TaskControlBlockInner>,
 }
 
@@ -43,7 +48,7 @@ impl TaskControlBlock {
         unsafe { self.inner.unlock() };
     }
 
-    pub fn new_kthread(entry: fn() -> !) -> Arc<Self> {
+    pub fn new_kthread(entry: KthreadEntryCell) -> Arc<Self> {
         let kstack = KernelStackAllocator::alloc();
         let (_, kstack_top) = kstack.range();
         let process = KERNEL_PROCESS.clone();
@@ -53,7 +58,7 @@ impl TaskControlBlock {
             process: Arc::downgrade(&process),
             kstack,
             id,
-            kthread_entry: Some(entry),
+            kthread_entry: entry,
             inner: SpinMutex::new(
                 TaskControlBlockInner {
                     status: TaskStatus::Ready,
