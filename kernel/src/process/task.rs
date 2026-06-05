@@ -27,10 +27,9 @@ pub struct TaskControlBlock {
     pub id: usize,
     /// 内核线程的入口函数
     ///
-    /// 内核函数的入口会先被**暂存**到这里，当前 task 被首次调度时，会把这里的闭包
-    /// **所有权**取出。这意味着不能通过判断 kthread_entry 是否为 Some 来判断该
-    /// task 是否为内核线程，内核线程在第一次被调度后，这里永远是 None
-    pub kthread_entry: KthreadEntryCell,
+    /// 入口闭包会先被**暂存**到这里；当前 task 首次进入 `task_entry` 时，会通过
+    /// `take()` 将闭包的**所有权**取出并执行。取出后 cell 内部会变为 `None`，因此
+    /// 不能通过 `take()` 的返回值是否为 `Some` 来长期判断该 task 是否为内核线程。
     inner: SpinMutex<TaskControlBlockInner>,
 }
 
