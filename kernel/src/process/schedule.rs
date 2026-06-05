@@ -75,7 +75,7 @@ pub fn task_entry() {
         .clone()
         .expect("task_entry: current_task is None");
     unsafe { task.unlock() };
-    if let Some(kthread_entry) = task.kthread_entry {
+    if let Some(kthread_entry) = unsafe { task.kthread_entry.take() } {
         IrqArch::enable_interrupt();
         kthread_entry();
     }
