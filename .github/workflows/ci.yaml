@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+          components: clippy, rustfmt
+          target: riscv64gc-unknown-none-elf
+
+      - name: Cargo Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Clippy
+        uses: clechasseur/rs-clippy-check@v4.0.4
+        with:
+          working-directory: kernel
+          args: --all-targets -- -D warnings
+
+      - name: Check Code Format
+        run: cd kernel && cargo fmt --check
