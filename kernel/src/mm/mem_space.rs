@@ -350,7 +350,7 @@ impl MemorySpace {
         println!("Kind: {:?}", self.kind);
         println!("Root Page Table: {:?}", self.root_page_table);
         if show_page_table_frames {
-            for (_, frame) in self.page_table_frames.iter() {
+            for frame in self.page_table_frames.values() {
                 println!("\t{:?}", frame);
             }
         }
@@ -362,7 +362,7 @@ impl MemorySpace {
             .unwrap_or(0)
             .max(4);
         println!("Memory Areas:");
-        for (_, area) in self.areas.iter() {
+        for area in self.areas.values() {
             let area_type = match area.area_type() {
                 MemoryAreaType::Private => "P",
                 MemoryAreaType::Identical => "I",

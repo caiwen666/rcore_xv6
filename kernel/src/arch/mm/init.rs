@@ -69,7 +69,7 @@ pub fn init() {
     }
 
     let text_area = MemoryArea::new(
-        VirtAddr::new(stext as usize),
+        VirtAddr::new(stext),
         // linker.ld 中都已经 4k 对齐了，所以无需考虑上取整
         etext - stext,
         MemoryPermission::Readable | MemoryPermission::Executable,
@@ -79,7 +79,7 @@ pub fn init() {
     kernel_space.push(text_area);
 
     let rodata_area = MemoryArea::new(
-        VirtAddr::new(srodata as usize),
+        VirtAddr::new(srodata),
         erodata - srodata,
         // BOOT_STACK 链接在 .rodata 段内；启动栈必须可写。整段 rodata 映射为 RW
         //（后续可改为仅映射栈页或把栈挪到 .bss）。
@@ -90,7 +90,7 @@ pub fn init() {
     kernel_space.push(rodata_area);
 
     let data_area = MemoryArea::new(
-        VirtAddr::new(sdata as usize),
+        VirtAddr::new(sdata),
         edata - sdata,
         MemoryPermission::Readable | MemoryPermission::Writable,
         MemoryAreaType::Identical,
@@ -99,7 +99,7 @@ pub fn init() {
     kernel_space.push(data_area);
 
     let bss_area = MemoryArea::new(
-        VirtAddr::new(sbss as usize),
+        VirtAddr::new(sbss),
         ebss - sbss,
         MemoryPermission::Readable | MemoryPermission::Writable,
         MemoryAreaType::Identical,
