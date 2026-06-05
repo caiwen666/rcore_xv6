@@ -30,6 +30,7 @@ pub struct TaskControlBlock {
     /// 入口闭包会先被**暂存**到这里；当前 task 首次进入 `task_entry` 时，会通过
     /// `take()` 将闭包的**所有权**取出并执行。取出后 cell 内部会变为 `None`，因此
     /// 不能通过 `take()` 的返回值是否为 `Some` 来长期判断该 task 是否为内核线程。
+    pub kthread_entry: KthreadEntryCell,
     inner: SpinMutex<TaskControlBlockInner>,
 }
 
