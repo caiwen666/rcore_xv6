@@ -5,7 +5,6 @@
 #![feature(negative_impls)]
 #![feature(likely_unlikely)]
 #![feature(box_as_ptr)]
-#![feature(never_type)]
 
 use crate::{
     arch::{IrqArch, MMArch},
@@ -139,12 +138,6 @@ pub fn kthread_test() -> ! {
         if t > 200 {
             break;
         }
-    }
-    for i in 0..10 {
-        spawn_kthread(move || {
-            println!("hello, world! {}", i);
-            exit_kthread();
-        });
     }
     for _ in 0..1000 {
         UART0.put(b'X');
