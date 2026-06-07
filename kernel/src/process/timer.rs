@@ -1,7 +1,7 @@
 use core::{cmp::Ordering, time::Duration};
 
 use crate::{
-    exception::timer::jiffies,
+    exception::timer::{TIMER_INTERVAL, jiffies},
     process::{
         cpu::CPUManager,
         schedule::TaskScheduler,
@@ -14,7 +14,7 @@ use lazy_static::lazy_static;
 
 #[inline]
 pub fn time_us() -> usize {
-    jiffies() * 1000
+    jiffies() * TIMER_INTERVAL * 1000
 }
 
 struct SleepTimer {
@@ -35,7 +35,7 @@ impl PartialOrd for SleepTimer {
 }
 impl Ord for SleepTimer {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.expire_us.cmp(&other.expire_us)
+        other.expire_us.cmp(&self.expire_us)
     }
 }
 
