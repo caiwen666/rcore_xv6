@@ -10,7 +10,7 @@
 use crate::{
     arch::{IrqArch, MMArch},
     driver::{UART0, VIRTIO0, enable_plic, init_plic},
-    exception::{InterruptArch, timer::timer_tickets},
+    exception::InterruptArch,
     fs::{
         ROOT_FS,
         vfs::{IndexNode, lookup},
@@ -21,10 +21,14 @@ use crate::{
         cpu::CPUManager,
         kthread::{exit_kthread, spawn_kthread},
         schedule::schedule_loop,
+        timer::sleep_with_interval,
     },
 };
 use alloc::{boxed::Box, string::String, vec, vec::Vec};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
 mod arch;
 mod console;
@@ -94,22 +98,7 @@ pub fn kthread_main() -> ! {
     }
     spawn_kthread(kthread_test);
     let task = CPUManager::current_task().expect("kthread_main: current_task is None");
-    let mut last: Option<usize> = None;
     println!("hello, world! {}", task.id);
-    loop {
-        let t = timer_tickets();
-        if let Some(prev) = last {
-            if t - prev == 100 {
-                println!("thread {} timer_tickets = {}", task.id, t);
-                last = Some(t);
-            }
-        } else {
-            last = Some(t);
-        }
-        if t > 300 {
-            break;
-        }
-    }
     println!("VIRTIO0: {} KB", VIRTIO0.capacity() / 1024);
     let mut text_bytes = Vec::with_capacity(2048);
     let mut test_buf = Box::new([0u8; 512]);
@@ -124,21 +113,10 @@ pub fn kthread_main() -> ! {
 
 pub fn kthread_test() -> ! {
     let task = CPUManager::current_task().expect("kthread_main: current_task is None");
-    let mut last: Option<usize> = None;
     println!("hello, world! {}", task.id);
-    loop {
-        let t = timer_tickets();
-        if let Some(prev) = last {
-            if t - prev == 60 {
-                println!("thread {} timer_tickets = {}", task.id, t);
-                last = Some(t);
-            }
-        } else {
-            last = Some(t);
-        }
-        if t > 200 {
-            break;
-        }
+    for i in 0..5 {
+        println!("thread {} countdown: {}", task.id, 5 - i);
+        sleep_with_interval(Duration::from_secs(1));
     }
     for i in 0..10 {
         spawn_kthread(move || {

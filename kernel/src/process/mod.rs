@@ -6,6 +6,7 @@ pub mod mm;
 pub mod process;
 pub mod schedule;
 pub mod task;
+pub mod timer;
 
 use crate::process::process::ProcessControlBlock;
 use alloc::sync::Arc;
