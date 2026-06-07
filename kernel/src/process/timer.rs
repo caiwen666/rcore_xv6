@@ -89,11 +89,19 @@ pub fn sleep_with_expire(expire_us: usize) {
 ///
 /// - `interval_us`: 间隔时间，单位为微秒
 ///
+/// # Panics
+///
+/// 如果间隔时间转为微秒后超过 usize::MAX，则 panic
+///
 /// # Preconditions
 ///
 /// 调用本函数时，不能持有自旋锁
 #[inline]
 pub fn sleep_with_interval(interval: Duration) {
+    assert!(
+        interval.as_micros() <= usize::MAX as u128,
+        "interval is too long"
+    );
     let current_time = time_us();
     sleep_with_expire(current_time + interval.as_micros() as usize);
 }
