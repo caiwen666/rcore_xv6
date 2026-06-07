@@ -83,11 +83,7 @@ pub fn sleep_with_expire(expire_us: usize) {
     unsafe { current_task.unlock() };
 }
 
-/// 休眠当前线程，直到过了 `interval_us` 之后唤醒
-///
-/// # Parameters
-///
-/// - `interval_us`: 间隔时间，单位为微秒
+/// 休眠当前线程，直到过了 `interval` 之后唤醒
 ///
 /// # Panics
 ///
