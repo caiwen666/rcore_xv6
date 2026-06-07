@@ -91,7 +91,8 @@ pub fn sleep_with_expire(expire_us: usize) {
 ///
 /// # Panics
 ///
-/// 如果间隔时间转为微秒后超过 usize::MAX，则 panic
+/// - 如果间隔时间转为微秒后超过 usize::MAX，则 panic
+/// - 如果当前系统的计时器时间加上间隔时间超过 usize::MAX，则 panic
 ///
 /// # Preconditions
 ///
@@ -103,7 +104,11 @@ pub fn sleep_with_interval(interval: Duration) {
         "interval is too long"
     );
     let current_time = time_us();
-    sleep_with_expire(current_time + interval.as_micros() as usize);
+    sleep_with_expire(
+        current_time
+            .checked_add(interval.as_micros() as usize)
+            .expect("interval is too long"),
+    );
 }
 
 pub fn check_sleep_timer() {
