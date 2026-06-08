@@ -1,13 +1,15 @@
 use core::alloc::{GlobalAlloc, Layout};
 
 use crate::{
-    arch::{FRAME_ALLOCATOR, MMArch},
+    arch::MMArch,
     mm::{
         MemoryManagementArch,
         address::PhysAddr,
-        allocator::{PageFrameAllocator, slab::SLAB_ALLOCATOR},
+        allocator::{FRAME_ALLOCATOR, PageFrameAllocator, slab::SlabAllocator},
     },
+    sync::spin::SpinMutex,
 };
+use lazy_static::lazy_static;
 
 pub struct KernelAllocator;
 
@@ -37,6 +39,14 @@ impl KernelAllocator {
             .dealloc(PhysAddr::new(ptr as usize), count);
     }
 }
+
+lazy_static! {
+    static ref SLAB_ALLOCATOR: SpinMutex<SlabAllocator> =
+        SpinMutex::new(SlabAllocator::new(), "slab_allocator");
+}
+
+#[global_allocator]
+pub static KERNEL_ALLOCATOR: KernelAllocator = KernelAllocator;
 
 unsafe impl GlobalAlloc for KernelAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {

@@ -1,9 +1,9 @@
 use crate::{
-    arch::FRAME_ALLOCATOR,
     driver::MEMORY_AREAS,
     mm::{
         KERNEL_SPACE, PhysMemoryAreaKind,
         address::{PhysAddr, VirtAddr},
+        allocator::FRAME_ALLOCATOR,
         mem_space::{MemoryArea, MemoryAreaType, MemoryPermission},
     },
 };
