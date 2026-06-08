@@ -15,7 +15,7 @@ use crate::{
         ROOT_FS,
         vfs::{IndexNode, lookup},
     },
-    mm::{KERNEL_SPACE, MemoryManagementArch, allocator::kernel::KernelAllocator},
+    mm::{KERNEL_SPACE, MemoryManagementArch},
     process::{
         ProcessManager,
         cpu::CPUManager,
@@ -42,9 +42,6 @@ mod sync;
 mod utils;
 
 extern crate alloc;
-
-#[global_allocator]
-pub static KERNEL_ALLOCATOR: KernelAllocator = KernelAllocator;
 
 /// 内核的入口函数
 #[unsafe(no_mangle)]

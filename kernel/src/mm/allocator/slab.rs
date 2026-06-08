@@ -1,14 +1,8 @@
 use core::{alloc::Layout, ptr::NonNull};
 
-use crate::{KERNEL_ALLOCATOR, sync::spin::SpinMutex};
+use crate::mm::allocator::kernel::KERNEL_ALLOCATOR;
 use alloc::boxed::Box;
-use lazy_static::lazy_static;
 use slabmalloc::*;
-
-lazy_static! {
-    pub static ref SLAB_ALLOCATOR: SpinMutex<SlabAllocator> =
-        SpinMutex::new(SlabAllocator::new(), "slab_allocator");
-}
 
 pub struct SlabAllocator {
     inner: ZoneAllocator<'static>,

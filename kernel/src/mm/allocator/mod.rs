@@ -4,10 +4,32 @@ pub mod kernel;
 pub mod slab;
 
 use crate::{
-    arch::{FRAME_ALLOCATOR, MMArch},
-    mm::{MemoryManagementArch, address::PhysAddr},
+    arch::MMArch,
+    mm::{MemoryManagementArch, address::PhysAddr, allocator::buddy::BuddyAllocator},
+    sync::spin::SpinMutex,
 };
 use core::fmt::Debug;
+use lazy_static::lazy_static;
+
+/// 页帧分配器
+pub trait PageFrameAllocator {
+    /// 分配指定数量的页帧
+    ///
+    /// 分配出来的页帧中存放的数据不保证清零
+    ///
+    /// # Returns
+    ///
+    /// - 返回页帧的起始地址
+    /// - 如果分配失败，则返回 None
+    fn alloc(&mut self, count: usize) -> Option<PhysAddr>;
+    /// 释放某一地址开始的指定数量的页帧
+    ///
+    /// # Preconditions
+    ///
+    /// `addr` 和 `count` 需要与调用 `alloc` 时传入的参数和返回值一致，
+    /// 否则会导致未定义行为
+    fn dealloc(&mut self, addr: PhysAddr, count: usize);
+}
 
 /// 页帧
 pub struct PageFrame {
@@ -56,24 +78,10 @@ impl Debug for PageFrame {
     }
 }
 
-/// 页帧分配器
-pub trait PageFrameAllocator {
-    /// 分配指定数量的页帧
-    ///
-    /// 分配出来的页帧中存放的数据不保证清零
-    ///
-    /// # Returns
-    ///
-    /// - 返回页帧的起始地址
-    /// - 如果分配失败，则返回 None
-    fn alloc(&mut self, count: usize) -> Option<PhysAddr>;
-    /// 释放某一地址开始的指定数量的页帧
-    ///
-    /// # Preconditions
-    ///
-    /// `addr` 和 `count` 需要与调用 `alloc` 时传入的参数和返回值一致，
-    /// 否则会导致未定义行为
-    fn dealloc(&mut self, addr: PhysAddr, count: usize);
+lazy_static! {
+    /// 全局的页帧分配器
+    pub static ref FRAME_ALLOCATOR: SpinMutex<BuddyAllocator> =
+        SpinMutex::new(BuddyAllocator::new(), "frame_allocator");
 }
 
 /// 使用全局页帧分配器分配一个页帧

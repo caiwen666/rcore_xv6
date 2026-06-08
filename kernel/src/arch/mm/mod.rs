@@ -3,10 +3,8 @@ mod pte;
 
 use crate::{
     arch::mm::pte::Sv39PTE,
-    mm::{MemoryManagementArch, allocator::buddy::BuddyAllocator, mem_space::MemorySpace},
-    sync::spin::SpinMutex,
+    mm::{MemoryManagementArch, mem_space::MemorySpace},
 };
-use lazy_static::lazy_static;
 
 pub struct RiscV64MMArch;
 
@@ -41,10 +39,4 @@ impl MemoryManagementArch for RiscV64MMArch {
             core::arch::asm!("sfence.vma");
         }
     }
-}
-
-lazy_static! {
-    /// 全局的页帧分配器
-    pub static ref FRAME_ALLOCATOR: SpinMutex<BuddyAllocator> =
-        SpinMutex::new(BuddyAllocator::new(), "frame_allocator");
 }
