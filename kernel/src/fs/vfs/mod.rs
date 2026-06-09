@@ -1,107 +1,137 @@
-pub mod mount;
+//! 虚拟文件系统框架
+//!
+//! 框架的主要目的是统一各个文件系统的接口，同时还做到如下几点：
+//! 1. 提供文件系统挂载功能，可以把一个文件系统挂载到其他文件系统中，框架自动处理跨文件系统跳转
+//! 2. 提供整套的 Inode 缓存机制
+//! 3. 提供 PageCache 缓存机制
 
-use alloc::{string::String, sync::Arc, vec::Vec};
+mod inode_cache;
+pub mod interface;
+mod mount;
+mod page_cache;
 
-use crate::fs::ROOT_FS;
+use core::{ops::Deref, ptr::NonNull};
 
-/// 文件类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileType {
-    File,
-    Directory,
+use crate::{
+    fs::{
+        ROOT_FS,
+        vfs::{
+            interface::{FileType, Metadata},
+            page_cache::PageCache,
+        },
+    },
+    sync::{condvar::Condvar, spin::SpinMutex},
+};
+use alloc::{
+    collections::btree_map::BTreeMap,
+    string::String,
+    sync::{Arc, Weak},
+    vec::Vec,
+};
+
+pub(super) use interface::{FileSystem, IndexNode};
+
+/// 虚拟文件系统
+pub struct VirtualFileSystem {
+    inner_fs: Arc<dyn FileSystem>,
+    /// 当前文件系统下的挂载点，以实现文件系统的递归挂载
+    mountpoints: SpinMutex<BTreeMap<u64, Arc<VirtualFileSystem>>>,
+    /// 当前被挂载的文件系统对应的挂载点的 Inode，
+    /// 记录这个以实现从被挂载文件系统向父目录跳跃时跨文件系统
+    ///
+    /// 如果当前文件系统是最根上的文件系统，没有被挂载到其他文件
+    /// 系统中的话，这里就为 None
+    self_mountpoints: Option<VirtualIndexNode>,
+    self_weak: Weak<Self>,
+    inode_cache: SpinMutex<BTreeMap<u64, VirtualIndexNode>>,
 }
 
-/// 文件的元数据
-#[derive(Debug, Clone)]
-pub struct Metadata {
-    pub file_type: FileType,
-    /// 文件大小。单位：字节
-    pub size: usize,
-    /// 文件名称
-    #[expect(unused)]
-    pub name: String,
+impl VirtualFileSystem {
+    /// 使用 VFS 接管指定文件系统
+    pub fn new(fs: Arc<dyn FileSystem>) -> Arc<Self> {
+        Arc::new_cyclic(|weak| Self {
+            inner_fs: fs,
+            mountpoints: SpinMutex::new(BTreeMap::new(), "vfs_mountpoints"),
+            self_mountpoints: None,
+            self_weak: weak.clone(),
+            inode_cache: SpinMutex::new(BTreeMap::new(), "vfs_inode_cache"),
+        })
+    }
+
+    pub fn root(&self) -> VirtualIndexNode {
+        let inode = self.inner_fs.root_inode();
+        self.get_inode_with_cache(inode)
+    }
 }
 
-pub trait IndexNode: Send + Sync {
-    /// 在 inode 的指定偏移量开始，读取指定大小的数据
-    ///
-    /// 如果读取到的数据长度小于 `buf` 的长度，则 `buf`
-    /// 剩余部分不会被修改。
-    ///
-    /// # Returns
-    ///
-    /// 返回成功读取的字节数
-    ///
-    /// # Panics
-    ///
-    /// - 如果当前 inode 不是文件，则 panic
-    fn read_at(&self, offset: usize, buf: &mut [u8]) -> usize;
+pub struct VirtualIndexNode {
+    ptr: NonNull<VirtualIndexNodeInner>,
+    fs: Weak<VirtualFileSystem>,
+    weak: bool,
+}
 
-    /// 在当前 inode 下寻找指定名称的文件
-    ///
-    /// # Returns
-    ///
-    /// - 对于同一文件实体，返回的 Arc 应该要指向同一 IndexNode 实例，
-    ///   否则会导致未定义行为。
-    /// - 如果不存在则返回 None
-    ///
-    /// # Panics
-    ///
-    /// - 如果当前 inode 不是目录，则 panic
-    fn find(&self, name: &str) -> Option<Arc<dyn IndexNode>>;
+unsafe impl Send for VirtualIndexNode {}
+unsafe impl Sync for VirtualIndexNode {}
+impl VirtualIndexNode {
+    pub fn fs(&self) -> Arc<VirtualFileSystem> {
+        self.fs
+            .upgrade()
+            .expect("Failed to upgrade weak reference to strong reference")
+    }
 
-    /// 获取父目录
-    ///
-    /// # Returns
-    ///
-    /// - 对于同一文件实体，返回的 Arc 应该要指向同一 IndexNode 实例，
-    ///   否则会导致未定义行为。
-    /// - 如果当前已经为根目录了，则返回 None
-    fn parent(&self) -> Option<Arc<dyn IndexNode>>;
-
-    /// 获取文件的元数据
-    fn metadata(&self) -> Metadata;
-
-    /// 将当前 inode 作为挂载点，挂载文件系统
-    ///
-    /// # Parameters
-    ///
-    /// - `fs`: 要挂载的文件系统
-    ///
-    ///
-    /// # Panics
-    ///
-    /// - 如果当前文件系统没有实现挂载功能，则 panic
-    /// - 如果当前 inode 已经是一个挂载点，则 panic
-    /// - 如果当前 inode 是当前文件系统的根目录则 panic
-    /// - 如果当前 inode 不是目录，则 panic
-    ///
-    /// # Notes
-    ///
-    /// 这个专门给 MountFS 实现的，其他的文件系统不应该实现这个
-    #[expect(unused)]
-    fn mount(&self, _fs: Arc<dyn FileSystem>) {
-        unimplemented!()
+    pub fn metadata(&self) -> Metadata {
+        self.inner_locked.lock().inode().metadata()
     }
 
     /// 列出当前目录下的所有文件名称
     ///
     /// # Panics
     ///
-    /// 如果当前 inode 不是目录，则 panic
-    fn list(&self) -> Vec<String>;
+    /// - 如果当前 inode 的类型不是目录，则 panic
+    pub fn list(&self) -> Vec<String> {
+        let inner_locked = self.inner_locked.lock();
+        let inode = inner_locked.inode();
+        if inode.metadata().file_type != FileType::Directory {
+            panic!("current inode is not a directory");
+        }
+        inode.list()
+    }
 }
 
-pub trait FileSystem: Send + Sync {
-    /// 获取文件系统的根 inode
-    fn root_inode(&self) -> Arc<dyn IndexNode>;
-    /// 文件系统名称
-    #[expect(unused)]
-    fn name(&self) -> &'static str;
+impl Deref for VirtualIndexNode {
+    type Target = VirtualIndexNodeInner;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.ptr.as_ref() }
+    }
+}
+
+pub struct VirtualIndexNodeInner {
+    /// 如果当前 inode 正在初始化中，那么当前线程从 inner_locked 中
+    /// 拿 inode 会得到 None，此时需要带 inner_locked 在 condvar 上面
+    /// 等待
+    condvar: Condvar,
+    inner_locked: SpinMutex<VirtualIndexNodeInnerLocked>,
+    page_cache: PageCache,
+    id: u64,
+}
+
+pub struct VirtualIndexNodeInnerLocked {
+    /// 如果当前 inode 正在初始化中，这里就是 None
+    inode: Option<Arc<dyn IndexNode>>,
+    ref_count: usize,
+    /// 是否正在销毁
+    destroying: bool,
+}
+
+impl VirtualIndexNodeInnerLocked {
+    pub fn inode(&self) -> Arc<dyn IndexNode> {
+        self.inode.clone().expect("Failed to get inode")
+    }
 }
 
 /// 以 `base` 为基准，查找 `path` 对应的 inode
-pub fn lookup(base: Arc<dyn IndexNode>, path: &str) -> Option<Arc<dyn IndexNode>> {
+pub fn lookup(base: VirtualIndexNode, path: &str) -> Option<VirtualIndexNode> {
     let mut current = if path.starts_with('/') {
         ROOT_FS.root()
     } else {

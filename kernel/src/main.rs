@@ -11,10 +11,7 @@ use crate::{
     arch::{IrqArch, MMArch},
     driver::{UART0, VIRTIO0, enable_plic, init_plic},
     exception::InterruptArch,
-    fs::{
-        ROOT_FS,
-        vfs::{IndexNode, lookup},
-    },
+    fs::{ROOT_FS, vfs::lookup},
     mm::{KERNEL_SPACE, MemoryManagementArch},
     process::{
         ProcessManager,

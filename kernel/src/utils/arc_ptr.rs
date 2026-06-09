@@ -1,3 +1,4 @@
+#![expect(unused)]
 use alloc::sync::Arc;
 use core::cmp::Ordering;
 

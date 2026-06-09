@@ -18,6 +18,7 @@ use crate::{
     mm::{PhysMemoryArea, PhysMemoryAreaKind, address::PhysAddr},
     process::cpu::CPUManager,
 };
+use alloc::sync::Arc;
 use core::ptr::NonNull;
 use lazy_static::lazy_static;
 use sifive_test::SiFiveTest;
@@ -79,7 +80,7 @@ lazy_static! {
 pub static PLIC_INSTANCE: PLIC = PLIC::new(PLIC_ADDR);
 pub static SIFIVE_TEST: SiFiveTest = SiFiveTest::new(SIFIVE_TEST_ADDR);
 lazy_static! {
-    pub static ref VIRTIO0: VirtIOBlk<MmioTransport<'static>> = {
+    pub static ref VIRTIO0: Arc<VirtIOBlk<MmioTransport<'static>>> = {
         // SAFETY: 我们只对 VIRTIO0 建立一次 Transport 实例，并且 VIRTIO0 一直存在。
         let transport = unsafe {
             MmioTransport::new(
@@ -97,7 +98,7 @@ lazy_static! {
             panic!("VIRTIO0: Unsupported vendor ID: 0x{:X}", transport.vendor_id());
         }
 
-        VirtIOBlk::new(transport)
+        Arc::new(VirtIOBlk::new(transport))
     };
 }
 

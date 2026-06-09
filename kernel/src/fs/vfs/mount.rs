@@ -1,127 +1,65 @@
-use crate::{
-    fs::vfs::{FileSystem, IndexNode},
-    sync::spin::SpinMutex,
-    utils::ArcPtr,
-};
-use alloc::{
-    collections::btree_map::BTreeMap,
-    string::String,
-    sync::{Arc, Weak},
-    vec::Vec,
-};
+use crate::fs::vfs::{VirtualFileSystem, VirtualIndexNode, interface::FileType};
+use alloc::sync::Arc;
 
-/// 所有被挂载的文件系统都被这个包裹，以实现文件系统的递归挂载
-pub struct MountFS {
-    inner: Arc<dyn FileSystem>,
-    /// 当前文件系统下的挂载点，以实现文件系统的递归挂载
-    mountpoints: SpinMutex<BTreeMap<ArcPtr<dyn IndexNode>, Arc<MountFS>>>,
-    /// 当前被挂载的文件系统对应的挂载点的 Inode，
-    /// 记录这个以实现从被挂载文件系统向父目录跳跃时跨文件系统
+impl VirtualIndexNode {
+    /// 寻找当前目录下指定名称的文件的 inode，会自动处理挂载点
     ///
-    /// 如果当前文件系统是最根上的文件系统，没有被挂载到其他文件
-    /// 系统中的话，这里就为 None
-    self_mountpoints: Option<Arc<MountFSInode>>,
-    self_weak: Weak<Self>,
-}
-
-impl MountFS {
-    /// 创建一个根文件系统
-    pub fn new_root(fs: Arc<dyn FileSystem>) -> Arc<Self> {
-        Arc::new_cyclic(|weak| Self {
-            inner: fs,
-            mountpoints: SpinMutex::new(BTreeMap::new(), "vfs_mountpoints"),
-            self_mountpoints: None,
-            self_weak: weak.clone(),
-        })
-    }
-
-    pub fn root(&self) -> Arc<MountFSInode> {
-        Arc::new(MountFSInode {
-            inner: self.inner.root_inode(),
-            mount_fs: self.self_weak.clone(),
-        })
-    }
-}
-
-pub struct MountFSInode {
-    inner: Arc<dyn IndexNode>,
-    mount_fs: Weak<MountFS>,
-}
-
-impl IndexNode for MountFSInode {
-    fn read_at(&self, offset: usize, buf: &mut [u8]) -> usize {
-        self.inner.read_at(offset, buf)
-    }
-
-    fn find(&self, name: &str) -> Option<Arc<dyn IndexNode>> {
-        self.inner.find(name).map(|inode| -> Arc<dyn IndexNode> {
-            let arc_ptr = ArcPtr::new(inode.clone());
-            let mount_fs = self.mount_fs.upgrade().unwrap();
-            if let Some(mount_fs) = mount_fs.mountpoints.lock().get(&arc_ptr) {
-                Arc::new(MountFSInode {
-                    inner: mount_fs.inner.root_inode(),
-                    mount_fs: Arc::downgrade(mount_fs),
-                })
+    /// # Panics
+    ///
+    /// - 如果当前 inode 的类型不是目录，则 panic
+    pub fn find(&self, name: &str) -> Option<VirtualIndexNode> {
+        if self.metadata().file_type != FileType::Directory {
+            panic!("current inode is not a directory");
+        }
+        self.find_with_cache(name).map(|inode| {
+            let fs = self.fs();
+            // 走到挂载点了，跳过去
+            if let Some(mount_fs) = fs.mountpoints.lock().get(&inode.id) {
+                let root_inode_id = mount_fs.inner_fs.root_inode();
+                mount_fs.get_inode_with_cache(root_inode_id)
             } else {
-                Arc::new(MountFSInode {
-                    inner: inode,
-                    mount_fs: self.mount_fs.clone(),
-                })
+                inode
             }
         })
     }
 
-    fn parent(&self) -> Option<Arc<dyn IndexNode>> {
-        let mount_fs = self.mount_fs.upgrade().unwrap();
-        if Arc::ptr_eq(&self.inner, &mount_fs.inner.root_inode()) {
-            // 需要跨越文件系统
-            match &mount_fs.self_mountpoints {
+    /// 获取当前文件的父目录的 inode，会自动处理挂载点
+    ///
+    /// # Returns
+    ///
+    /// 如果已经是根目录了，则返回 None
+    pub fn parent(&self) -> Option<VirtualIndexNode> {
+        let fs = self.fs();
+        if let Some(parent_inode_id) = self.inner_locked.lock().inode().parent() {
+            Some(fs.get_inode_with_cache(parent_inode_id))
+        } else {
+            match fs.self_mountpoints.as_ref() {
                 None => None,
                 Some(self_mountpoints) => self_mountpoints.parent(),
             }
-        } else {
-            Some(Arc::new(MountFSInode {
-                inner: self.inner.parent().unwrap(),
-                mount_fs: self.mount_fs.clone(),
-            }))
         }
     }
 
-    fn metadata(&self) -> super::Metadata {
-        self.inner.metadata()
-    }
-
-    fn mount(&self, fs: Arc<dyn FileSystem>) {
-        if self.inner.metadata().file_type != super::FileType::Directory {
+    /// 将当前目录挂载为另一个文件系统的根目录
+    ///
+    /// # Panics
+    ///
+    /// - 如果当前 inode 的类型不是目录，则 panic
+    /// - 如果当前 inode 已经是挂载点，则 panic
+    /// - 如果当前 inode 是当前文件系统的根目录，则 panic
+    #[expect(unused)]
+    pub fn mount(&self, target_fs: VirtualFileSystem) {
+        if self.metadata().file_type != FileType::Directory {
             panic!("current inode is not a directory");
         }
-        let mount_fs = self.mount_fs.upgrade().unwrap();
-        if mount_fs
-            .mountpoints
-            .lock()
-            .contains_key(&ArcPtr::new(self.inner.clone()))
-        {
+        let fs = self.fs();
+        let mut mountpoints = fs.mountpoints.lock();
+        if mountpoints.contains_key(&self.id) {
             panic!("current inode is already a mount point");
         }
-        if Arc::ptr_eq(&self.inner, &mount_fs.inner.root_inode()) {
+        if self.id == fs.inner_fs.root_inode() {
             panic!("current inode is the root inode of the current file system");
         }
-        let new_mount_fs = Arc::new_cyclic(|weak| MountFS {
-            inner: fs,
-            mountpoints: SpinMutex::new(BTreeMap::new(), "vfs_mountpoints"),
-            self_mountpoints: Some(Arc::new(MountFSInode {
-                inner: self.inner.clone(),
-                mount_fs: self.mount_fs.clone(),
-            })),
-            self_weak: weak.clone(),
-        });
-        mount_fs
-            .mountpoints
-            .lock()
-            .insert(ArcPtr::new(self.inner.clone()), new_mount_fs);
-    }
-
-    fn list(&self) -> Vec<String> {
-        self.inner.list()
+        mountpoints.insert(self.id, Arc::new(target_fs));
     }
 }
