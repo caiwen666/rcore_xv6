@@ -1,4 +1,3 @@
-mod arc_ptr;
 mod block_iterator;
 mod recycle_allocator;
 mod ring_buffer;
