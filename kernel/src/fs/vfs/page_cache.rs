@@ -45,14 +45,17 @@ impl VirtualIndexNode {
     /// 之前加载了但是被换出，此时就需要调用本函数。
     ///
     /// 本函数会分配物理页并加载数据到其中，调用本函数后，[CachedPage::frame] 必定不为 None。
+    ///
+    /// 调用本函数前需要先持有 `page_lock` 锁。并且一定是先对 `page_lock` 加锁再对 `cached_page` 加锁。
+    /// 这样能保证和 [VirtualIndexNode::sync] 中的加锁顺序一致，避免死锁。
     fn prepare_page<'a>(
         &self,
         offset: usize,
+        _page_lock: MutexGuard<'a, ()>,
         mut cached_page: MutexGuard<'a, CachedPage>,
     ) -> MutexGuard<'a, CachedPage> {
         assert!(offset.is_multiple_of(MMArch::PAGE_SIZE));
         assert!(cached_page.frame.is_none());
-        let _page_lock = self.page_cache.page_lock.lock();
         let inode = self.inner_locked.lock().inode();
         // 有可能文件大小被改变了，当前这个 offset 超出了文件大小
         // 但是此时走到这里，我们必须给一个 page frame，
@@ -104,7 +107,15 @@ impl VirtualIndexNode {
             let frame = if let Some(frame) = page_guard.frame.as_mut() {
                 frame
             } else {
-                page_guard = self.prepare_page(block.block_id() * MMArch::PAGE_SIZE, page_guard);
+                // 先 drop 掉，然后先获取 page_lock 的锁之后再重新获取 cached_page 的锁，
+                // 以满足 [VirtualIndexNode::prepare_page] 中的加锁顺序要求，避免死锁。
+                drop(page_guard);
+                let _page_lock = self.page_cache.page_lock.lock();
+                page_guard = self.prepare_page(
+                    block.block_id() * MMArch::PAGE_SIZE,
+                    _page_lock,
+                    cached_page.lock(),
+                );
                 page_guard.frame.as_mut().unwrap()
             };
             let data = frame.as_mut_slice();
@@ -144,7 +155,11 @@ impl VirtualIndexNode {
             let frame = if let Some(frame) = page_guard.frame.as_mut() {
                 frame
             } else {
-                page_guard = self.prepare_page(file_offset, page_guard);
+                // 先 drop 掉，然后先获取 page_lock 的锁之后再重新获取 cached_page 的锁，
+                // 以满足 [VirtualIndexNode::prepare_page] 中的加锁顺序要求，避免死锁。
+                drop(page_guard);
+                let _page_lock = self.page_cache.page_lock.lock();
+                page_guard = self.prepare_page(file_offset, _page_lock, cached_page.lock());
                 page_guard.frame.as_mut().unwrap()
             };
             let data = frame.as_mut_slice();
