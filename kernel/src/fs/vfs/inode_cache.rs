@@ -172,8 +172,11 @@ impl Drop for VirtualIndexNode {
                     //    这里对 inner_locked 加锁的话，这里再拿到锁肯定是看到正确的 destroy_tag 了。如果这里先于
                     //    那个 drop 对 inner_locked 加锁的话，to_destroy 必然是为 false 的
                     if inner_locked.destroy_tag == destroying_id && inner_locked.to_destroy {
-                        inode_cache.remove(&weak_inode.id).unwrap();
+                        let cached_inode = inode_cache.remove(&weak_inode.id).unwrap();
                         inner_locked.in_cache = false;
+                        drop(inner_locked);
+                        // cached_inode 在 drop 时仍需要对 inner_locked 加锁，所以这里先释放 cached_inode
+                        drop(cached_inode);
                     }
                 }
                 exit_kthread();
