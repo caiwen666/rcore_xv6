@@ -41,26 +41,44 @@ impl PageCache {
 }
 
 impl VirtualIndexNode {
-    /// [CachedPage::frame] 可能为 None，这说明 [CachedPage] 对应的页帧可能尚未加载或是
-    /// 之前加载了但是被换出，此时就需要调用本函数。
+    /// 获取指定偏移量处的 page cache
     ///
-    /// 本函数会分配物理页并加载数据到其中，调用本函数后，[CachedPage::frame] 必定不为 None。
+    /// 本函数会自动处理 page cache 的加载，调用本函数后，[CachedPage::frame] 必定不为 None。
     ///
-    /// 调用本函数前需要先持有 `page_lock` 锁。并且一定是先对 `page_lock` 加锁再对 `cached_page` 加锁。
-    /// 这样能保证和 [VirtualIndexNode::sync] 中的加锁顺序一致，避免死锁。
-    fn prepare_page<'a>(
+    /// # Panics
+    ///
+    /// - 如果 `offset` 不是 `MMArch::PAGE_SIZE` 的倍数，则 panic
+    ///
+    /// # Preconditions
+    ///
+    /// - `offset`、`target`、`cached_page` 三者必须是对应的，否则会出现未定义行为
+    /// - 调用该函数时不能持有 `inner_locked` 锁和 `page_lock` 锁，因为该函数会尝试获取
+    ///   这两个锁，这会导致死锁
+    fn get_prepared_page<'a>(
         &self,
         offset: usize,
-        _page_lock: MutexGuard<'a, ()>,
+        target: &'a Arc<Mutex<CachedPage>>,
         mut cached_page: MutexGuard<'a, CachedPage>,
     ) -> MutexGuard<'a, CachedPage> {
         assert!(offset.is_multiple_of(MMArch::PAGE_SIZE));
-        assert!(cached_page.frame.is_none());
+        if cached_page.frame.is_some() {
+            return cached_page;
+        }
         let inode = self.inner_locked.lock().inode();
+        // 先 drop 掉，然后改为先对 `page_lock` 加锁再对 `cached_page` 加锁。
+        // 这样能保证和 [VirtualIndexNode::sync] 中的加锁顺序一致，避免死锁。
+        drop(cached_page);
+        let _page_lock = self.page_cache.page_lock.lock();
+        cached_page = target.lock();
+        // 由于此时重新对 `cached_page` 加锁，所以还需要看一下是不是释放锁的期间内
+        // 有人已经加载好了
+        if cached_page.frame.is_some() {
+            return cached_page;
+        }
+        let mut frame = alloc_frame(1).unwrap();
         // 有可能文件大小被改变了，当前这个 offset 超出了文件大小
         // 但是此时走到这里，我们必须给一个 page frame，
         // 因此这种情况下我们只给个 page frame，但是不写数据
-        let mut frame = alloc_frame(1).unwrap();
         if offset < inode.metadata().size {
             let end = (offset + MMArch::PAGE_SIZE).min(inode.metadata().size) - offset;
             // 保证读取数据在文件大小范围内
@@ -103,22 +121,12 @@ impl VirtualIndexNode {
         let mut pos = 0;
         for block in BlockIterator::new(MMArch::PAGE_SIZE, offset, size) {
             let cached_page = self.get_page(block.block_id() * MMArch::PAGE_SIZE);
-            let mut page_guard = cached_page.lock();
-            let frame = if let Some(frame) = page_guard.frame.as_mut() {
-                frame
-            } else {
-                // 先 drop 掉，然后先获取 page_lock 的锁之后再重新获取 cached_page 的锁，
-                // 以满足 [VirtualIndexNode::prepare_page] 中的加锁顺序要求，避免死锁。
-                drop(page_guard);
-                let _page_lock = self.page_cache.page_lock.lock();
-                page_guard = self.prepare_page(
-                    block.block_id() * MMArch::PAGE_SIZE,
-                    _page_lock,
-                    cached_page.lock(),
-                );
-                page_guard.frame.as_mut().unwrap()
-            };
-            let data = frame.as_mut_slice();
+            let mut page_guard = self.get_prepared_page(
+                block.block_id() * MMArch::PAGE_SIZE,
+                &cached_page,
+                cached_page.lock(),
+            );
+            let data = page_guard.frame.as_mut().unwrap().as_mut_slice();
             buf[pos..pos + block.size()]
                 .copy_from_slice(&data[block.offset()..block.offset() + block.size()]);
             pos += block.size();
@@ -151,18 +159,12 @@ impl VirtualIndexNode {
         for block in BlockIterator::new(MMArch::PAGE_SIZE, offset, size) {
             let file_offset = block.block_id() * MMArch::PAGE_SIZE;
             let cached_page = self.get_page(file_offset);
-            let mut page_guard = cached_page.lock();
-            let frame = if let Some(frame) = page_guard.frame.as_mut() {
-                frame
-            } else {
-                // 先 drop 掉，然后先获取 page_lock 的锁之后再重新获取 cached_page 的锁，
-                // 以满足 [VirtualIndexNode::prepare_page] 中的加锁顺序要求，避免死锁。
-                drop(page_guard);
-                let _page_lock = self.page_cache.page_lock.lock();
-                page_guard = self.prepare_page(file_offset, _page_lock, cached_page.lock());
-                page_guard.frame.as_mut().unwrap()
-            };
-            let data = frame.as_mut_slice();
+            let mut page_guard = self.get_prepared_page(
+                block.block_id() * MMArch::PAGE_SIZE,
+                &cached_page,
+                cached_page.lock(),
+            );
+            let data = page_guard.frame.as_mut().unwrap().as_mut_slice();
             data[block.offset()..block.offset() + block.size()]
                 .copy_from_slice(&buf[pos..pos + block.size()]);
             self.page_cache.dirty.lock().insert(file_offset);
