@@ -8,7 +8,7 @@ use crate::{
         kthread::{exit_kthread, spawn_kthread},
         timer::sleep_with_interval,
     },
-    sync::{condvar::Condvar, spin::SpinMutex},
+    sync::{condvar::Condvar, mutex::Mutex, spin::SpinMutex},
 };
 
 use super::{VirtualFileSystem, VirtualIndexNode};
@@ -20,13 +20,19 @@ impl VirtualFileSystem {
             inner_locked: SpinMutex::new(
                 VirtualIndexNodeInnerLocked {
                     inode: None,
-                    ref_count: 1,
-                    destroying: false,
+                    strong_count: 1,
+                    weak_count: 0,
+                    to_destroy: false,
+                    destroy_tag: 0,
+                    // new_inode 只在 get_inode_with_cache 中调用，后面该 inode 必然是
+                    // 会存在于 cache_inode 中的。
+                    in_cache: true,
                 },
                 "inode_inner_locked",
             ),
             page_cache: PageCache::new(),
             id,
+            destroying_lock: Mutex::new((), "inode_destroying_lock"),
         });
         VirtualIndexNode {
             ptr: unsafe { NonNull::new_unchecked(Box::leak(inner)) },
@@ -68,9 +74,10 @@ impl VirtualFileSystem {
 }
 
 impl VirtualIndexNode {
-    /// 和普通 clone 大致相同，但是不会清除 destroying 标记
+    /// 和普通 clone 大致相同，但是不会清除 to_destroy 标记，并且不会增加 strong_count，而是
+    /// 增加 weak_count
     ///
-    /// 克隆出来的 [VirtualIndexNode] 不能再被 clone，同时在 drop 的时候不检查引用计数是否减为了 1
+    /// 克隆出来的 [VirtualIndexNode] 不能再被 clone
     ///
     /// # Panics
     ///
@@ -79,7 +86,7 @@ impl VirtualIndexNode {
         assert!(!self.weak);
         let inode = unsafe { self.ptr.as_ref() };
         let mut inner_locked = inode.inner_locked.lock();
-        inner_locked.ref_count += 1;
+        inner_locked.weak_count += 1;
         VirtualIndexNode {
             ptr: NonNull::from_ref(inode),
             fs: self.fs.clone(),
@@ -93,12 +100,12 @@ impl Clone for VirtualIndexNode {
         let inode = unsafe { self.ptr.as_ref() };
         let mut inner_locked = inode.inner_locked.lock();
         // 有可能是从 inode_cache 中克隆，此时必然会正在持有 inode_cache 的锁，这里就不要再拿锁
-        inner_locked.ref_count += 1;
-        // inner_locked.destroying 如果为 true 的话，则必然是引用计数从 1 -> 2 这个 clone 过程
+        inner_locked.strong_count += 1;
+        // inner_locked.to_destroy 如果为 true 的话，则必然是引用计数从 1 -> 2 这个 clone 过程
         // 而这个 clone 过程必然是从 inode_cache 中克隆的，此时必然是持有 inode_cache 的锁
         // 这里应该不存在和 inode 回收竞争的情况
-        if inner_locked.destroying {
-            inner_locked.destroying = false;
+        if inner_locked.to_destroy {
+            inner_locked.to_destroy = false;
         }
         VirtualIndexNode {
             ptr: NonNull::from_ref(inode),
@@ -111,41 +118,68 @@ impl Drop for VirtualIndexNode {
     fn drop(&mut self) {
         let inode = unsafe { self.ptr.as_ref() };
         let mut inner_locked = inode.inner_locked.lock();
-        inner_locked.ref_count -= 1;
-        // 此时只剩下了在 inode_cache 中的引用了，我们认为此时可以开始准备释放 inode 了
-        if !self.weak && inner_locked.ref_count == 1 {
-            inner_locked.destroying = true;
+        if self.weak {
+            inner_locked.weak_count -= 1;
+        } else {
+            inner_locked.strong_count -= 1;
+        }
+        // 如果是非 weak 引用 drop 掉，会减少 strong_count，此时如果 strong_count 为 1，则说明
+        // 要准备开始释放 inode 了
+        if !self.weak && inner_locked.strong_count == 1 {
+            inner_locked.destroy_tag += 1;
+            let destroying_id = inner_locked.destroy_tag;
             // 由于 weak clone 还要用到 inner_locked，所以这里先释放锁
             drop(inner_locked);
             let weak_inode = self.weak_clone();
             spawn_kthread(move || {
+                // 有可能在销毁过程中，又出现了多次从 inode_cache 中 clone 然后又销毁的情况
+                // 于是会 spawn 出多个销毁线程
+                // 我们认为只有最后那个销毁线程负责完成销毁操作
                 {
-                    // 这里的 sync 应该是会直接把整个 inode 的全部 dirty page 全部落盘的
-                    // 因为现在引用计数为 1，之后 inode_cache 里面存在引用，所以不会存在
-                    // 中间又产生 dirty_page 的情况
-                    // 如果真的出现了产生 dirty_page，那么就说明 inode 肯定被从 inode_cache
-                    // 中克隆出去了，那么 destroying 标记会被清除，销毁不会继续进行。
+                    // 首先需要加锁，确保同一时间只有一个销毁线程在进行销毁
+                    let _destroying_lock = weak_inode.destroying_lock.lock();
+                    let inner_locked = weak_inode.inner_locked.lock();
+                    // 1. 如果 in_cache 为 false 的话，说明最后的销毁线程已经完成了销毁操作，直接返回
+                    // 2. 如果 destroy_tag 不等于 destroying_id 的话，说明当前线程不是最后一个销毁线程，直接返回
+                    // 注意，对于第二点，即使 destroy_tag 等于 destroying_id，也有可能不是最后一个销毁线程，因为
+                    // 有可能在后面 sync 的过程中，又有人从 inode_cache 中克隆出去了然后释放引用了，那么就会有新的销毁线程
+                    if !inner_locked.in_cache || inner_locked.destroy_tag != destroying_id {
+                        drop(inner_locked);
+                        drop(_destroying_lock);
+                        exit_kthread();
+                    }
+                    drop(inner_locked);
+                    // 如果在 sync 过程中又出现了新的脏页的出现，那么
+                    // 1. 又出现了新的引用，to_destroy 标记被清除
+                    // 2. to_destroy 标记被清除然后又被设置，此时一定是有了一个新的销毁线程
                     weak_inode.sync();
                     // TODO 这里模拟耗时操作
                     sleep_with_interval(Duration::from_secs(5));
-                    // 先对 inode_cache 加锁，再判断 destroying 标记是否存在
                     let fs = weak_inode.fs();
                     let mut inode_cache = fs.inode_cache.lock();
-                    let inner_locked = weak_inode.inner_locked.lock();
-                    // 如果标记被清除的话，说明在销毁过程中又有人从 inode_cache 中克隆出来 inode 了
-                    // 就不再继续回收
-                    if inner_locked.destroying {
-                        let cache_inode = inode_cache.remove(&weak_inode.id).unwrap();
-                        // 先释放 weak_inode 再释放 cache_inode，cache_inode 不是 weak 的，如果先释放他的话
-                        // 引用计数又归 1，那么 drop 中又会跑到这里，就死循环了
-                        drop(inner_locked);
-                        drop(weak_inode);
-                        drop(cache_inode);
+                    // 现在对 inode_cache 加锁，可以确保 to_destroy 标记不会发生改变，
+                    let mut inner_locked = weak_inode.inner_locked.lock();
+                    // 现在对 inner_locked 加锁，可以确保 destroy_tag 不会发生改变，
+
+                    // 我们只关心 to_destroy 为 true 的情况
+                    // 这种情况下，当前所有的 drop 操作肯定都把 destroy_tag 设置好了，可以直接根据 destroy_tag 判定
+                    // 当前线程是否为最后一个销毁线程
+                    // 1. 只要 to_destroy 为 true，那么此时 strong_count 必然等于 1。因为第二个强引用在生成
+                    //    时，必然是从 inode_cache 中克隆出来的，如果克隆对 inode_cache 的加锁先于这里，那么这里再
+                    //    拿到锁，看到的 to_destroy 必然是为 false 的。反之，那个克隆拿到 inode_cache 的锁之后，当
+                    //    前 inode 实例已经被释放了
+                    // 2. 此时不会出现有 drop 但是还没更新 destroy_tag 的情况，因为如果有 drop，如果这个 drop 先于
+                    //    这里对 inner_locked 加锁的话，这里再拿到锁肯定是看到正确的 destroy_tag 了。如果这里先于
+                    //    那个 drop 对 inner_locked 加锁的话，to_destroy 必然是为 false 的
+                    if inner_locked.destroy_tag == destroying_id && inner_locked.to_destroy {
+                        inode_cache.remove(&weak_inode.id).unwrap();
+                        inner_locked.in_cache = false;
                     }
                 }
                 exit_kthread();
             });
-        } else if inner_locked.ref_count == 0 {
+        } else if inner_locked.weak_count + inner_locked.strong_count == 0 {
+            // 说明 strong_count 和 weak_count 都为 0，此时就可以安全回收内存了
             // 这里要先释放 inner_locked，不这样写出来的话，后面 _boxed 先把堆上数据释放
             // 然后 inner_locked 就成野指针了
             drop(inner_locked);

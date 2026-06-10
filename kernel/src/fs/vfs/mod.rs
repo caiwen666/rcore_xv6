@@ -20,7 +20,7 @@ use crate::{
             page_cache::PageCache,
         },
     },
-    sync::{condvar::Condvar, spin::SpinMutex},
+    sync::{condvar::Condvar, mutex::Mutex, spin::SpinMutex},
 };
 use alloc::{
     collections::btree_map::BTreeMap,
@@ -112,6 +112,9 @@ pub struct VirtualIndexNodeInner {
     /// 等待
     condvar: Condvar,
     inner_locked: SpinMutex<VirtualIndexNodeInnerLocked>,
+    /// 销毁线程开始进行销毁时需要拿到这个锁，确保同一 inode 同一时间只有
+    /// 一个销毁线程在进行销毁
+    destroying_lock: Mutex<()>,
     page_cache: PageCache,
     id: u64,
 }
@@ -119,9 +122,18 @@ pub struct VirtualIndexNodeInner {
 pub struct VirtualIndexNodeInnerLocked {
     /// 如果当前 inode 正在初始化中，这里就是 None
     inode: Option<Arc<dyn IndexNode>>,
-    ref_count: usize,
-    /// 是否正在销毁
-    destroying: bool,
+    strong_count: usize,
+    /// 是否要销毁这个 inode
+    to_destroy: bool,
+    /// 弱引用数量
+    weak_count: usize,
+    /// 负责完成销毁的 tag
+    destroy_tag: u64,
+    /// inode 的引用是否仍在 inode_cache 中
+    ///
+    /// inode 只有在持有 destroying_lock 锁的时候才能被修改。因此可以认为 destroying_lock
+    /// 期间，in_cache 是不变的
+    in_cache: bool,
 }
 
 impl VirtualIndexNodeInnerLocked {
