@@ -126,6 +126,7 @@ impl Drop for VirtualIndexNode {
         // 如果是非 weak 引用 drop 掉，会减少 strong_count，此时如果 strong_count 为 1，则说明
         // 要准备开始释放 inode 了
         if !self.weak && inner_locked.strong_count == 1 {
+            inner_locked.to_destroy = true;
             inner_locked.destroy_tag += 1;
             let destroying_id = inner_locked.destroy_tag;
             // 由于 weak clone 还要用到 inner_locked，所以这里先释放锁
@@ -146,6 +147,7 @@ impl Drop for VirtualIndexNode {
                     if !inner_locked.in_cache || inner_locked.destroy_tag != destroying_id {
                         drop(inner_locked);
                         drop(_destroying_lock);
+                        drop(weak_inode);
                         exit_kthread();
                     }
                     drop(inner_locked);
@@ -179,6 +181,7 @@ impl Drop for VirtualIndexNode {
                         drop(cached_inode);
                     }
                 }
+                drop(weak_inode);
                 exit_kthread();
             });
         } else if inner_locked.weak_count + inner_locked.strong_count == 0 {
