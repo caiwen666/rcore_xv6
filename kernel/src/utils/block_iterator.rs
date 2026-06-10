@@ -8,6 +8,7 @@ pub struct BlockIterator {
     /// 当前遍历到的位置
     current_pos: usize,
     block_start: usize,
+    /// 当前遍历到的块的结束块编号 + 1（也就是 `block_end` 是开区间的）
     block_end: usize,
 }
 
@@ -72,7 +73,7 @@ impl Iterator for BlockIterator {
             };
             let size = if block_id == self.block_start {
                 (self.block_size - offset).min(self.size)
-            } else if block_id == self.block_end {
+            } else if block_id + 1 == self.block_end {
                 self.offset + self.size - self.current_pos
             } else {
                 self.block_size - offset

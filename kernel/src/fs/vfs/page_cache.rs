@@ -93,6 +93,9 @@ impl VirtualIndexNode {
     /// 返回成功读取的字节数
     pub fn read_at(&self, offset: usize, buf: &mut [u8]) -> usize {
         let metadata = self.inner_locked.lock().inode().metadata();
+        if offset >= metadata.size {
+            return 0;
+        }
         let size = buf.len().min(metadata.size - offset);
         let mut pos = 0;
         for block in BlockIterator::new(MMArch::PAGE_SIZE, offset, size) {
@@ -105,7 +108,7 @@ impl VirtualIndexNode {
                 page_guard.frame.as_mut().unwrap()
             };
             let data = frame.as_mut_slice();
-            buf[pos..block.size()]
+            buf[pos..pos + block.size()]
                 .copy_from_slice(&data[block.offset()..block.offset() + block.size()]);
             pos += block.size();
         }
@@ -129,20 +132,25 @@ impl VirtualIndexNode {
     #[expect(unused)]
     pub fn write_at(&self, offset: usize, buf: &[u8]) -> usize {
         let metadata = self.inner_locked.lock().inode().metadata();
+        if offset >= metadata.size {
+            return 0;
+        }
         let size = buf.len().min(metadata.size - offset);
         let mut pos = 0;
         for block in BlockIterator::new(MMArch::PAGE_SIZE, offset, size) {
-            let cached_page = self.get_page(block.block_id() * MMArch::PAGE_SIZE);
+            let file_offset = block.block_id() * MMArch::PAGE_SIZE;
+            let cached_page = self.get_page(file_offset);
             let mut page_guard = cached_page.lock();
             let frame = if let Some(frame) = page_guard.frame.as_mut() {
                 frame
             } else {
-                page_guard = self.prepare_page(block.block_id() * MMArch::PAGE_SIZE, page_guard);
+                page_guard = self.prepare_page(file_offset, page_guard);
                 page_guard.frame.as_mut().unwrap()
             };
             let data = frame.as_mut_slice();
             data[block.offset()..block.offset() + block.size()]
-                .copy_from_slice(&buf[pos..block.size()]);
+                .copy_from_slice(&buf[pos..pos + block.size()]);
+            self.page_cache.dirty.lock().insert(file_offset);
             pos += block.size();
         }
         pos

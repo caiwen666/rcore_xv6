@@ -33,7 +33,7 @@ impl VirtualIndexNode {
         if let Some(parent_inode_id) = self.inner_locked.lock().inode().parent() {
             Some(fs.get_inode_with_cache(parent_inode_id))
         } else {
-            match fs.self_mountpoints.as_ref() {
+            match fs.self_mountpoints.lock().as_ref() {
                 None => None,
                 Some(self_mountpoints) => self_mountpoints.parent(),
             }
@@ -48,7 +48,7 @@ impl VirtualIndexNode {
     /// - 如果当前 inode 已经是挂载点，则 panic
     /// - 如果当前 inode 是当前文件系统的根目录，则 panic
     #[expect(unused)]
-    pub fn mount(&self, target_fs: VirtualFileSystem) {
+    pub fn mount(&self, mut target_fs: Arc<VirtualFileSystem>) {
         if self.metadata().file_type != FileType::Directory {
             panic!("current inode is not a directory");
         }
@@ -60,6 +60,7 @@ impl VirtualIndexNode {
         if self.id == fs.inner_fs.root_inode() {
             panic!("current inode is the root inode of the current file system");
         }
-        mountpoints.insert(self.id, Arc::new(target_fs));
+        target_fs.self_mountpoints.lock().insert(self.clone());
+        mountpoints.insert(self.id, target_fs);
     }
 }

@@ -41,7 +41,7 @@ pub struct VirtualFileSystem {
     ///
     /// 如果当前文件系统是最根上的文件系统，没有被挂载到其他文件
     /// 系统中的话，这里就为 None
-    self_mountpoints: Option<VirtualIndexNode>,
+    self_mountpoints: SpinMutex<Option<VirtualIndexNode>>,
     self_weak: Weak<Self>,
     inode_cache: SpinMutex<BTreeMap<u64, VirtualIndexNode>>,
 }
@@ -52,7 +52,7 @@ impl VirtualFileSystem {
         Arc::new_cyclic(|weak| Self {
             inner_fs: fs,
             mountpoints: SpinMutex::new(BTreeMap::new(), "vfs_mountpoints"),
-            self_mountpoints: None,
+            self_mountpoints: SpinMutex::new(None, "vfs_self_mountpoints"),
             self_weak: weak.clone(),
             inode_cache: SpinMutex::new(BTreeMap::new(), "vfs_inode_cache"),
         })

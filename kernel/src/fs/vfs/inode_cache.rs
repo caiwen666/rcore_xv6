@@ -146,6 +146,9 @@ impl Drop for VirtualIndexNode {
                 exit_kthread();
             });
         } else if inner_locked.ref_count == 0 {
+            // 这里要先释放 inner_locked，不这样写出来的话，后面 _boxed 先把堆上数据释放
+            // 然后 inner_locked 就成野指针了
+            drop(inner_locked);
             // 此时说明在 inode cache 里面的 Arc 也释放了，整个 inode 都可以释放了
             let _boxed = unsafe { Box::from_raw(self.ptr.as_ptr() as *mut _) };
         }
