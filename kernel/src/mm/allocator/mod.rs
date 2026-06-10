@@ -57,6 +57,15 @@ impl PageFrame {
             core::ptr::write_bytes(self.addr.get_mut::<u8>(), 0, MMArch::PAGE_SIZE * self.count)
         };
     }
+
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                self.addr.get_mut::<u8>(),
+                self.count * MMArch::PAGE_SIZE,
+            )
+        }
+    }
 }
 
 impl Drop for PageFrame {
@@ -78,14 +87,14 @@ impl Debug for PageFrame {
     }
 }
 
-lazy_static! {
-    /// 全局的页帧分配器
-    pub static ref FRAME_ALLOCATOR: SpinMutex<BuddyAllocator> =
-        SpinMutex::new(BuddyAllocator::new(), "frame_allocator");
-}
-
 /// 使用全局页帧分配器分配一个页帧
 pub fn alloc_frame(count: usize) -> Option<PageFrame> {
     let paddr = FRAME_ALLOCATOR.lock().alloc(count)?;
     Some(PageFrame::new(paddr, count))
+}
+
+lazy_static! {
+    /// 全局的页帧分配器
+    pub static ref FRAME_ALLOCATOR: SpinMutex<BuddyAllocator> =
+        SpinMutex::new(BuddyAllocator::new(), "frame_allocator");
 }

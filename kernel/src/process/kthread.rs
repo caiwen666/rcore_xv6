@@ -38,6 +38,8 @@ where
 }
 
 /// 退出当前的内核线程
+///
+/// **调用前应确保应该 drop 掉的东西全都 drop 了**
 pub fn exit_kthread() -> ! {
     let task = CPUManager::current_task().expect("exit_kthread: current_task is None");
     let mut task_inner = task.lock();

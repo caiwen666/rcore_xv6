@@ -20,6 +20,11 @@ impl Condvar {
     }
 
     /// 将当前线程休眠，直到被唤醒
+    ///
+    /// # Panics
+    ///
+    /// 调用者需要保证调用时只持有 guard 对应的自旋锁，否则持有的其他锁可能会死锁，
+    /// 如果调用者未满足该条件，则 panic
     pub fn wait<'a, T>(&self, guard: SpinMutexGuard<'a, T>) -> SpinMutexGuard<'a, T> {
         let current_task = CPUManager::current_task().unwrap();
 
@@ -44,6 +49,7 @@ impl Condvar {
 
         // SAFETY: 目前还持有对当前线程的锁，所以中断是关闭的
         let cpu = unsafe { CPUManager::current_cpu() };
+        // 这里只持有对当前 Task 的锁
         cpu.go_scheduler(current_context);
 
         let cpu = unsafe { CPUManager::current_cpu() };
