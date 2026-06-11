@@ -143,7 +143,12 @@ impl VirtualIndexNodeInnerLocked {
 }
 
 /// 以 `base` 为基准，查找 `path` 对应的 inode
+///
+/// **如果中间遇到了非目录类型，则直接返回该非目录类型的 inode**
 pub fn lookup(base: VirtualIndexNode, path: &str) -> Option<VirtualIndexNode> {
+    if base.metadata().file_type != FileType::Directory {
+        return Some(base);
+    }
     let mut current = if path.starts_with('/') {
         ROOT_FS.root()
     } else {
@@ -155,6 +160,9 @@ pub fn lookup(base: VirtualIndexNode, path: &str) -> Option<VirtualIndexNode> {
             continue;
         }
         current = current.find(component)?;
+        if current.metadata().file_type != FileType::Directory {
+            return Some(current);
+        }
     }
     Some(current)
 }

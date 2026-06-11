@@ -51,6 +51,8 @@ pub trait IndexNode: Send + Sync {
 
     /// 获取父目录
     ///
+    /// VFS 框架保证调用时，当前 inode 一定是目录类型
+    ///
     /// # Returns
     ///
     /// - 如果存在，则返回父目录的 inode 编号，该编号会影响 VFS 的 inode 缓存
