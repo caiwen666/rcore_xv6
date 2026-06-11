@@ -1,6 +1,6 @@
 use alloc::{
     collections::btree_map::BTreeMap,
-    string::{String, ToString},
+    string::String,
     sync::{Arc, Weak},
     vec::Vec,
 };
@@ -25,7 +25,6 @@ impl RamFS {
             inode_map.insert(
                 0,
                 Arc::new_cyclic(|inode_weak| RamFSInode {
-                    name: "root".to_string(),
                     parent: None,
                     inner: SpinMutex::new(
                         RamFSInodeType::Directory(BTreeMap::new()),
@@ -55,7 +54,6 @@ impl RamFS {
 }
 
 pub struct RamFSInode {
-    name: String,
     parent: Option<Weak<RamFSInode>>,
     inner: SpinMutex<RamFSInodeType>,
     self_weak: Weak<RamFSInode>,
@@ -91,7 +89,6 @@ impl RamFSInode {
         let mut fs = fs.lock();
         let id = fs.alloc_id();
         let directory = Arc::new_cyclic(|weak| RamFSInode {
-            name: name.clone(),
             parent: Some(self.self_weak.clone()),
             inner: SpinMutex::new(
                 RamFSInodeType::Directory(BTreeMap::new()),
@@ -128,7 +125,6 @@ impl RamFSInode {
         let mut fs = fs.lock();
         let id = fs.alloc_id();
         let file = Arc::new_cyclic(|weak| RamFSInode {
-            name: name.clone(),
             parent: Some(self.self_weak.clone()),
             inner: SpinMutex::new(RamFSInodeType::File(content), "ramfs_inode_inner"),
             self_weak: weak.clone(),
@@ -173,13 +169,11 @@ impl IndexNode for RamFSInode {
         let inner = self.inner.lock();
         if let RamFSInodeType::File(ref content) = *inner {
             Metadata {
-                name: self.name.clone(),
                 file_type: FileType::File,
                 size: content.len(),
             }
         } else {
             Metadata {
-                name: self.name.clone(),
                 file_type: FileType::Directory,
                 size: 0,
             }

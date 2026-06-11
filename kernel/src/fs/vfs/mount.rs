@@ -28,7 +28,14 @@ impl VirtualIndexNode {
     /// # Returns
     ///
     /// 如果已经是根目录了，则返回 None
+    ///
+    /// # Panics
+    ///
+    /// - 如果当前 inode 的类型不是目录，则 panic
     pub fn parent(&self) -> Option<VirtualIndexNode> {
+        if self.metadata().file_type != FileType::Directory {
+            panic!("current inode is not a directory");
+        }
         let fs = self.fs();
         if let Some(parent_inode_id) = self.inner_locked.lock().inode().parent() {
             Some(fs.get_inode_with_cache(parent_inode_id))

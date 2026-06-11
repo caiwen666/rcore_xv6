@@ -13,9 +13,6 @@ pub struct Metadata {
     pub file_type: FileType,
     /// 文件大小。单位：字节
     pub size: usize,
-    /// 文件名称
-    #[expect(unused)]
-    pub name: String,
 }
 
 pub trait IndexNode: Send + Sync {
@@ -53,6 +50,8 @@ pub trait IndexNode: Send + Sync {
     fn find(&self, name: &str) -> Option<u64>;
 
     /// 获取父目录
+    ///
+    /// VFS 框架保证调用时，当前 inode 一定是目录类型
     ///
     /// # Returns
     ///
