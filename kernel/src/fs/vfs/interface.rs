@@ -13,9 +13,6 @@ pub struct Metadata {
     pub file_type: FileType,
     /// 文件大小。单位：字节
     pub size: usize,
-    /// 文件名称
-    #[expect(unused)]
-    pub name: String,
 }
 
 pub trait IndexNode: Send + Sync {
