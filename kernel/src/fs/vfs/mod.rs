@@ -89,8 +89,7 @@ impl VirtualIndexNode {
     ///
     /// - 如果当前 inode 的类型不是目录，则 panic
     pub fn list(&self) -> Vec<String> {
-        let inner_locked = self.inner_locked.lock();
-        let inode = inner_locked.inode();
+        let inode = self.inner_locked.lock().inode();
         if inode.metadata().file_type != FileType::Directory {
             panic!("current inode is not a directory");
         }
