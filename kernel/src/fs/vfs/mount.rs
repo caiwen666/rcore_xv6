@@ -14,7 +14,10 @@ impl VirtualIndexNode {
         self.find_with_cache(name).map(|inode| {
             let fs = self.fs();
             // 走到挂载点了，跳过去
-            if let Some(mount_fs) = fs.mountpoints.lock().get(&inode.id) {
+            // 这里不能把 mount_fs 写到一行上去，不然 mountpoints.lock() 的 guard 生命周期会延长到
+            // 整合 if 块。
+            let mount_fs = fs.mountpoints.lock().get(&inode.id).cloned();
+            if let Some(mount_fs) = mount_fs {
                 let root_inode_id = mount_fs.inner_fs.root_inode();
                 mount_fs.get_inode_with_cache(root_inode_id)
             } else {
@@ -40,7 +43,7 @@ impl VirtualIndexNode {
         if let Some(parent_inode_id) = self.inner_locked.lock().inode().parent() {
             Some(fs.get_inode_with_cache(parent_inode_id))
         } else {
-            match fs.self_mountpoints.lock().as_ref() {
+            match fs.self_mountpoints.lock().as_ref().cloned() {
                 None => None,
                 Some(self_mountpoints) => self_mountpoints.parent(),
             }
