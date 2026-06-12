@@ -43,7 +43,7 @@ impl VirtualIndexNode {
         if let Some(parent_inode_id) = self.inner_locked.lock().inode().parent() {
             Some(fs.get_inode_with_cache(parent_inode_id))
         } else {
-            match fs.self_mountpoints.lock().as_ref() {
+            match fs.self_mountpoints.lock().as_ref().cloned() {
                 None => None,
                 Some(self_mountpoints) => self_mountpoints.parent(),
             }

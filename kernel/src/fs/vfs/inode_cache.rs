@@ -200,9 +200,8 @@ impl VirtualIndexNode {
     ///
     /// **会堵塞**
     pub(super) fn find_with_cache(&self, name: &str) -> Option<VirtualIndexNode> {
-        let inner_locked = self.inner_locked.lock();
-        let id = inner_locked.inode().find(name)?;
-        drop(inner_locked);
+        let inode = self.inner_locked.lock().inode();
+        let id = inode.find(name)?;
         let fs = self.fs();
         Some(fs.get_inode_with_cache(id))
     }
