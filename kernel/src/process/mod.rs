@@ -8,7 +8,7 @@ pub mod schedule;
 pub mod task;
 pub mod timer;
 
-use crate::process::process::ProcessControlBlock;
+use crate::process::{cpu::CPUManager, process::ProcessControlBlock};
 use alloc::sync::Arc;
 use lazy_static::lazy_static;
 
@@ -24,5 +24,9 @@ impl ProcessManager {
     pub fn init() {
         // 触发懒加载
         let _ = KERNEL_PROCESS.clone();
+    }
+
+    pub fn current() -> Arc<ProcessControlBlock> {
+        CPUManager::current_task().unwrap().process()
     }
 }

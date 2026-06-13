@@ -21,7 +21,7 @@ pub enum TaskStatus {
 }
 
 pub struct TaskControlBlock {
-    pub process: Weak<ProcessControlBlock>,
+    process: Weak<ProcessControlBlock>,
     #[expect(unused)]
     pub kstack: KernelStack,
     pub id: usize,
@@ -73,5 +73,9 @@ impl TaskControlBlock {
             process_inner.tasks[id] = Some(task.clone());
         }
         task
+    }
+
+    pub fn process(&self) -> Arc<ProcessControlBlock> {
+        self.process.upgrade().unwrap()
     }
 }

@@ -13,6 +13,7 @@ use crate::{
     exception::InterruptArch,
     fs::{
         Ext2FileSystem, ROOT_FS,
+        file::FileSeekMethod,
         vfs::{VirtualFileSystem, lookup},
     },
     mm::{KERNEL_SPACE, MemoryManagementArch},
@@ -88,6 +89,9 @@ pub fn kthread_main() -> ! {
     let mut logo_buf = vec![0u8; logo.metadata().size];
     logo.read_at(0, &mut logo_buf);
     println!("{}", String::from_utf8_lossy(logo_buf.as_slice()));
+    // 设置内核进程的工作目录
+    let process = ProcessManager::current();
+    process.set_cwd(ROOT_FS.root());
 
     // 初始化块设备
     println!("VIRTIO0: {} KB", VIRTIO0.capacity() / 1024);
@@ -97,12 +101,13 @@ pub fn kthread_main() -> ! {
 
     // 测试代码
     spawn_kthread(kthread_test);
-    let test_file = lookup(ROOT_FS.root(), "/root/Cargo.lock").unwrap();
-    let read_len = test_file.metadata().size.min(2048);
-    let mut text_bytes = vec![0u8; read_len];
-    test_file.read_at(0, &mut text_bytes);
-    let s = String::from_utf8_lossy(text_bytes.as_slice());
-    println!("{}", s);
+    let fd = process.open_file("/root/Cargo.lock").unwrap();
+    let file = process.get_file(fd).unwrap();
+    let file_len = file.seek(FileSeekMethod::End(0)).unwrap();
+    file.seek(FileSeekMethod::Absolute(0)).unwrap();
+    let mut file_buf = vec![0u8; file_len];
+    file.read(&mut file_buf).unwrap();
+    println!("{}", String::from_utf8_lossy(file_buf.as_slice()));
     exit_kthread();
 }
 

@@ -15,6 +15,7 @@ use core::{ops::Deref, ptr::NonNull};
 use crate::{
     fs::{
         ROOT_FS,
+        file::{File, FileSeekMethod},
         vfs::{
             interface::{FileType, Metadata},
             page_cache::PageCache,
@@ -165,4 +166,51 @@ pub fn lookup(base: VirtualIndexNode, path: &str) -> Option<VirtualIndexNode> {
         }
     }
     Some(current)
+}
+
+pub struct VirtualFile {
+    inode: VirtualIndexNode,
+    offset: SpinMutex<usize>,
+}
+
+impl VirtualFile {
+    pub fn new(inode: VirtualIndexNode) -> Self {
+        Self {
+            inode,
+            offset: SpinMutex::new(0, "virtual_file_offset"),
+        }
+    }
+}
+
+impl File for VirtualFile {
+    fn read(&self, buf: &mut [u8]) -> Option<usize> {
+        let now_offset = *self.offset.lock();
+        Some(self.inode.read_at(now_offset, buf))
+    }
+
+    fn write(&self, buf: &[u8]) -> Option<usize> {
+        let file_size = self.inode.metadata().size;
+        let now_offset = *self.offset.lock();
+        if now_offset >= file_size {
+            self.inode.resize(now_offset + 1);
+        }
+        Some(self.inode.write_at(now_offset, buf))
+    }
+
+    fn seek(&self, method: FileSeekMethod) -> Option<usize> {
+        let mut now_offset = self.offset.lock();
+        let pos = match method {
+            FileSeekMethod::Absolute(pos) => pos,
+            FileSeekMethod::Relative(offset) => {
+                if offset < 0 && *now_offset < offset.unsigned_abs() {
+                    0
+                } else {
+                    (*now_offset as isize + offset) as usize
+                }
+            }
+            FileSeekMethod::End(offset) => (self.inode.metadata().size as isize + offset) as usize,
+        };
+        *now_offset = pos;
+        Some(pos)
+    }
 }

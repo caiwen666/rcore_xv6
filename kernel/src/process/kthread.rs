@@ -46,7 +46,7 @@ pub fn exit_kthread() -> ! {
     // 内核线程目前没什么要回收的资源
 
     // 内核线程也不用变成僵尸线程来等待其他的线程来回收
-    let process = task.process.upgrade().unwrap();
+    let process = task.process();
     assert!(
         process.pid == 0,
         "exit_kthread: kthread should be in kernel process"

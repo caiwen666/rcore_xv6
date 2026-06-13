@@ -1,4 +1,5 @@
 use crate::{
+    fs::{file::File, vfs::VirtualIndexNode},
     process::task::TaskControlBlock,
     sync::spin::{SpinMutex, SpinMutexGuard},
     utils::RecycleAllocator,
@@ -18,6 +19,9 @@ pub struct ProcessControlBlockInner {
     /// 在创建线程时会优先查看任务列表中是否已有空闲槽位。
     pub tasks: Vec<Option<Arc<TaskControlBlock>>>,
     pub avail_task_id: RecycleAllocator,
+    pub cwd: Option<VirtualIndexNode>,
+    pub fd_table: Vec<Option<Arc<dyn File>>>,
+    pub avail_fd: RecycleAllocator,
 }
 
 impl ProcessControlBlock {
@@ -34,9 +38,21 @@ impl ProcessControlBlock {
                 ProcessControlBlockInner {
                     tasks: Vec::new(),
                     avail_task_id: RecycleAllocator::new(),
+                    cwd: None,
+                    fd_table: Vec::new(),
+                    avail_fd: RecycleAllocator::new(),
                 },
                 "kernel_process_inner",
             ),
         }
+    }
+
+    pub fn cwd(&self) -> VirtualIndexNode {
+        self.lock().cwd.as_ref().cloned().unwrap()
+    }
+
+    pub fn set_cwd(&self, cwd: VirtualIndexNode) {
+        let mut inner = self.lock();
+        inner.cwd = Some(cwd);
     }
 }

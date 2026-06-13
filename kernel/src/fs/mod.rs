@@ -1,4 +1,5 @@
 mod ext2;
+pub mod file;
 pub mod ramfs;
 pub mod vfs;
 
