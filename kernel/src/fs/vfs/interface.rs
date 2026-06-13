@@ -65,6 +65,8 @@ pub trait BlockDevice: Send + Sync + 'static {
         let mut block_buf = vec![0u8; block_size];
         let mut pos = 0;
         for block in BlockIterator::new(block_size, offset, buf.len()) {
+            // 由于是按整块写入的，需要先读取原来的数据
+            self.read_block(block.block_id(), block_buf.as_mut_slice());
             block_buf[block.offset()..block.offset() + block.size()]
                 .copy_from_slice(&buf[pos..pos + block.size()]);
             self.write_block(block.block_id(), block_buf.as_mut_slice());
