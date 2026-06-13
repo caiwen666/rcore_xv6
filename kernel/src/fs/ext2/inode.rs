@@ -31,6 +31,9 @@ impl Inode {
         let mut lb = logical_block_id - 12;
         // 一级间接
         if lb < ptrs {
+            if self.layout.level1_indirect_block == 0 {
+                return 0;
+            }
             let mut block_id_buf = [0u8; 4];
             self.fs.block_device().read_at(
                 self.layout.level1_indirect_block as usize * self.fs.block_size() + lb as usize * 4,
@@ -41,18 +44,24 @@ impl Inode {
         lb -= ptrs;
         // 二级间接
         if lb < ptrs * ptrs {
+            if self.layout.level2_indirect_block == 0 {
+                return 0;
+            }
             let mut level1_indirect_block_id_buf = [0u8; 4];
-            let level1_idx = lb / ptrs;
+            let level2_idx = lb / ptrs;
             self.fs.block_device().read_at(
                 self.layout.level2_indirect_block as usize * self.fs.block_size()
-                    + level1_idx as usize * 4,
+                    + level2_idx as usize * 4,
                 &mut level1_indirect_block_id_buf,
             );
             let level1_indirect_block_id = u32::from_le_bytes(level1_indirect_block_id_buf);
-            let level2_idx = lb % ptrs;
+            if level1_indirect_block_id == 0 {
+                return 0;
+            }
             let mut block_id_buf = [0u8; 4];
+            let level1_idx = lb % ptrs;
             self.fs.block_device().read_at(
-                level1_indirect_block_id as usize * self.fs.block_size() + level2_idx as usize * 4,
+                level1_indirect_block_id as usize * self.fs.block_size() + level1_idx as usize * 4,
                 &mut block_id_buf,
             );
             return u32::from_le_bytes(block_id_buf);
@@ -60,14 +69,20 @@ impl Inode {
         lb -= ptrs * ptrs;
         // 三级间接
         assert!(lb < ptrs * ptrs * ptrs);
+        if self.layout.level3_indirect_block == 0 {
+            return 0;
+        }
         let mut level2_indirect_block_id_buf = [0u8; 4];
-        let level1_idx = lb / (ptrs * ptrs);
+        let level3_idx = lb / (ptrs * ptrs);
         self.fs.block_device().read_at(
             self.layout.level3_indirect_block as usize * self.fs.block_size()
-                + level1_idx as usize * 4,
+                + level3_idx as usize * 4,
             &mut level2_indirect_block_id_buf,
         );
         let level2_indirect_block_id = u32::from_le_bytes(level2_indirect_block_id_buf);
+        if level2_indirect_block_id == 0 {
+            return 0;
+        }
         let mut level1_indirect_block_id_buf = [0u8; 4];
         let level2_idx = lb % (ptrs * ptrs) / ptrs;
         self.fs.block_device().read_at(
@@ -75,10 +90,13 @@ impl Inode {
             &mut level1_indirect_block_id_buf,
         );
         let level1_indirect_block_id = u32::from_le_bytes(level1_indirect_block_id_buf);
+        if level1_indirect_block_id == 0 {
+            return 0;
+        }
         let mut block_id_buf = [0u8; 4];
-        let level3_idx = lb % (ptrs * ptrs) % ptrs;
+        let level1_idx = lb % (ptrs * ptrs) % ptrs;
         self.fs.block_device().read_at(
-            level1_indirect_block_id as usize * self.fs.block_size() + level3_idx as usize * 4,
+            level1_indirect_block_id as usize * self.fs.block_size() + level1_idx as usize * 4,
             &mut block_id_buf,
         );
         u32::from_le_bytes(block_id_buf)
@@ -120,10 +138,14 @@ impl interface::IndexNode for Inode {
         let mut pos = 0;
         for block in BlockIterator::new(block_size, offset, buf.len()) {
             let block_id = self.map_logical_block(block.block_id() as u32);
-            self.fs.block_device().read_at(
-                block_id as usize * block_size + block.offset(),
-                &mut buf[pos..pos + block.size()],
-            );
+            if block_id == 0 {
+                buf[pos..pos + block.size()].fill(0);
+            } else {
+                self.fs.block_device().read_at(
+                    block_id as usize * block_size + block.offset(),
+                    &mut buf[pos..pos + block.size()],
+                );
+            }
             pos += block.size();
         }
     }
