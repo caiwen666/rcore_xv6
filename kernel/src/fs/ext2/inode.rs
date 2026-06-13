@@ -42,14 +42,17 @@ impl Inode {
         // 二级间接
         if lb < ptrs * ptrs {
             let mut level1_indirect_block_id_buf = [0u8; 4];
+            let level1_idx = lb / ptrs;
             self.fs.block_device().read_at(
-                self.layout.level2_indirect_block as usize * self.fs.block_size() + lb as usize * 4,
+                self.layout.level2_indirect_block as usize * self.fs.block_size()
+                    + level1_idx as usize * 4,
                 &mut level1_indirect_block_id_buf,
             );
             let level1_indirect_block_id = u32::from_le_bytes(level1_indirect_block_id_buf);
+            let level2_idx = lb % ptrs;
             let mut block_id_buf = [0u8; 4];
             self.fs.block_device().read_at(
-                level1_indirect_block_id as usize * self.fs.block_size() + lb as usize * 4,
+                level1_indirect_block_id as usize * self.fs.block_size() + level2_idx as usize * 4,
                 &mut block_id_buf,
             );
             return u32::from_le_bytes(block_id_buf);
@@ -58,20 +61,24 @@ impl Inode {
         // 三级间接
         assert!(lb < ptrs * ptrs * ptrs);
         let mut level2_indirect_block_id_buf = [0u8; 4];
+        let level1_idx = lb / (ptrs * ptrs);
         self.fs.block_device().read_at(
-            self.layout.level3_indirect_block as usize * self.fs.block_size() + lb as usize * 4,
+            self.layout.level3_indirect_block as usize * self.fs.block_size()
+                + level1_idx as usize * 4,
             &mut level2_indirect_block_id_buf,
         );
         let level2_indirect_block_id = u32::from_le_bytes(level2_indirect_block_id_buf);
         let mut level1_indirect_block_id_buf = [0u8; 4];
+        let level2_idx = lb % (ptrs * ptrs) / ptrs;
         self.fs.block_device().read_at(
-            level2_indirect_block_id as usize * self.fs.block_size() + lb as usize * 4,
+            level2_indirect_block_id as usize * self.fs.block_size() + level2_idx as usize * 4,
             &mut level1_indirect_block_id_buf,
         );
         let level1_indirect_block_id = u32::from_le_bytes(level1_indirect_block_id_buf);
         let mut block_id_buf = [0u8; 4];
+        let level3_idx = lb % (ptrs * ptrs) % ptrs;
         self.fs.block_device().read_at(
-            level1_indirect_block_id as usize * self.fs.block_size() + lb as usize * 4,
+            level1_indirect_block_id as usize * self.fs.block_size() + level3_idx as usize * 4,
             &mut block_id_buf,
         );
         u32::from_le_bytes(block_id_buf)
