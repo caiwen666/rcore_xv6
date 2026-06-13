@@ -11,7 +11,10 @@ use crate::{
     arch::{IrqArch, MMArch},
     driver::{UART0, VIRTIO0, enable_plic, init_plic},
     exception::InterruptArch,
-    fs::{ROOT_FS, vfs::lookup},
+    fs::{
+        Ext2FileSystem, ROOT_FS,
+        vfs::{VirtualFileSystem, lookup},
+    },
     mm::{KERNEL_SPACE, MemoryManagementArch},
     process::{
         ProcessManager,
@@ -21,7 +24,8 @@ use crate::{
         timer::sleep_with_interval,
     },
 };
-use alloc::{boxed::Box, string::String, vec, vec::Vec};
+use alloc::string::String;
+use alloc::vec;
 use core::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -80,26 +84,23 @@ pub extern "C" fn kernel_main() {
 /// 第一个内核线程
 pub fn kthread_main() -> ! {
     // 打印 LOGO，顺带调用 ROOT_FS 完成根文件系统的初始化
-    println!("{:?}", ROOT_FS.root().list());
-    let logo = lookup(ROOT_FS.root(), "logo.txt");
-    if let Some(logo) = logo {
-        let mut buf = vec![0u8; logo.metadata().size];
-        logo.read_at(0, &mut buf);
-        let s = String::from_utf8_lossy(buf.as_slice());
-        println!("{}", s);
-    } else {
-        println!("logo.txt not found");
-    }
-    spawn_kthread(kthread_test);
-    let task = CPUManager::current_task().expect("kthread_main: current_task is None");
-    println!("hello, world! {}", task.id);
+    let logo = lookup(ROOT_FS.root(), "logo.txt").unwrap();
+    let mut logo_buf = vec![0u8; logo.metadata().size];
+    logo.read_at(0, &mut logo_buf);
+    println!("{}", String::from_utf8_lossy(logo_buf.as_slice()));
+
+    // 初始化块设备
     println!("VIRTIO0: {} KB", VIRTIO0.capacity() / 1024);
-    let mut text_bytes = Vec::with_capacity(2048);
-    let mut test_buf = Box::new([0u8; 512]);
-    for i in 0..4 {
-        VIRTIO0.read_block(i, test_buf.as_mut_slice());
-        text_bytes.extend_from_slice(test_buf.as_ref());
-    }
+    // 挂载文件系统
+    let ext2_mountpoint = lookup(ROOT_FS.root(), "root").unwrap();
+    ext2_mountpoint.mount(VirtualFileSystem::new(Ext2FileSystem::new(VIRTIO0.clone())));
+
+    // 测试代码
+    spawn_kthread(kthread_test);
+    let test_file = lookup(ROOT_FS.root(), "/root/Cargo.lock").unwrap();
+    let read_len = test_file.metadata().size.min(2048);
+    let mut text_bytes = vec![0u8; read_len];
+    test_file.read_at(0, &mut text_bytes);
     let s = String::from_utf8_lossy(text_bytes.as_slice());
     println!("{}", s);
     exit_kthread();

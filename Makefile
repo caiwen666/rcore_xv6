@@ -2,6 +2,10 @@
 KERNEL = kernel
 # 产物存放的目录
 OUTPUT = target
+# ext2 镜像
+EXT2_IMG = ext2.img
+IMAGE_DIR = image
+EXT2_SIZE_MB = 1024
 
 # 输出目录不存在就创建
 $(shell mkdir -p $(OUTPUT))
@@ -43,20 +47,27 @@ QEMU_FLAGS += -bios none
 QEMU_FLAGS += -kernel $(OUTPUT)/kernel.elf
 QEMU_FLAGS += -m 128M
 QEMU_FLAGS += -smp $(CPUS)
-# 挂载 Cargo.lock 作为虚拟磁盘，仅用于测试
-QEMU_FLAGS += -drive file=kernel/Cargo.lock,if=none,format=raw,id=hd0
+QEMU_FLAGS += -drive file=$(EXT2_IMG),if=none,format=raw,id=hd0
 QEMU_FLAGS += -device virtio-blk-device,drive=hd0,bus=virtio-mmio-bus.0
 
-.PHONY: build run debug gdb
+.PHONY: build run debug gdb image
+
+image:
+	IMAGE_DIR=$(IMAGE_DIR) bash scripts/prepare_image.sh
+	rm -f $(EXT2_IMG)
+	dd if=/dev/zero of=$(EXT2_IMG) bs=1M count=$(EXT2_SIZE_MB) status=none
+	mke2fs -t ext2 -F -I 128 -d $(IMAGE_DIR) $(EXT2_IMG)
 
 build:
 	cd $(KERNEL) && $(CARGO) build $(CARGO_BUILD_FLAGS)
 	$(RUST_OBJCOPY) $(RUST_OBJCOPY_FLAGS)
 
 run: build
+	@test -f $(EXT2_IMG) || $(MAKE) image
 	$(QEMU) $(QEMU_FLAGS)
 
 debug: build
+	@test -f $(EXT2_IMG) || $(MAKE) image
 	$(QEMU) $(QEMU_FLAGS) -s -S
 
 gdb:
