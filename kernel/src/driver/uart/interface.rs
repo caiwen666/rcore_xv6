@@ -13,6 +13,7 @@ const FCR_FIFO_ENABLE: u8 = 1 << 0;
 // 状态寄存器
 const LSR: usize = 5;
 const LSR_TX_IDLE: u8 = 1 << 5;
+const LSR_RX_IDLE: u8 = 1 << 0;
 
 pub struct UartInterface {
     base_addr: usize,
@@ -140,6 +141,12 @@ impl UartInterface {
         self.read_reg(LSR) & LSR_TX_IDLE != 0
     }
 
+    /// 是否可以接收数据
+    #[inline]
+    pub fn rx_ready(&self) -> bool {
+        self.read_reg(LSR) & LSR_RX_IDLE != 0
+    }
+
     /// 发送一个字节
     ///
     /// # Preconditions
@@ -150,5 +157,15 @@ impl UartInterface {
         unsafe {
             core::ptr::write_volatile(self.base_addr as *mut u8, ch);
         }
+    }
+
+    /// 读入一个字节
+    ///
+    /// # Preconditions
+    ///
+    /// 必须确保 UART 可以接收数据，即 [Self::rx_ready()] 为 true，
+    /// 才能调用该函数，否则会出现未定义行为
+    pub fn get(&self) -> u8 {
+        unsafe { core::ptr::read_volatile(self.base_addr as *const u8) }
     }
 }

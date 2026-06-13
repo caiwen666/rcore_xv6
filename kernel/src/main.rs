@@ -9,7 +9,7 @@
 
 use crate::{
     arch::{IrqArch, MMArch},
-    driver::{UART0, VIRTIO0, enable_plic, init_plic},
+    driver::{VIRTIO0, enable_plic, init_plic},
     exception::InterruptArch,
     fs::{
         Ext2FileSystem, ROOT_FS,
@@ -124,8 +124,15 @@ pub fn kthread_test() -> ! {
             exit_kthread();
         });
     }
-    for _ in 0..1000 {
-        UART0.put(b'X');
+
+    let process = ProcessManager::current();
+    let fd = process.open_file("stdin").unwrap();
+    let stdin = process.get_file(fd).unwrap();
+    let fd = process.open_file("stdout").unwrap();
+    let stdout = process.get_file(fd).unwrap();
+    let mut buf = [0u8; 4];
+    loop {
+        stdin.read(&mut buf).unwrap();
+        stdout.write(&buf).unwrap();
     }
-    exit_kthread();
 }

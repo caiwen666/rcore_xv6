@@ -13,8 +13,10 @@ const BUF_SIZE: usize = 512;
 
 pub struct Uart {
     interface: UartInterface,
-    buf: SpinMutex<RingBuffer<u8, BUF_SIZE>>,
-    condvar: Condvar,
+    put_buf: SpinMutex<RingBuffer<u8, BUF_SIZE>>,
+    put_condvar: Condvar,
+    get_buf: SpinMutex<RingBuffer<u8, BUF_SIZE>>,
+    get_condvar: Condvar,
 }
 
 impl Uart {
@@ -30,8 +32,10 @@ impl Uart {
     pub fn new(base_addr: usize) -> Self {
         let uart = Self {
             interface: UartInterface::new(base_addr),
-            buf: SpinMutex::new(RingBuffer::new(), "uart_lock"),
-            condvar: Condvar::new(),
+            put_buf: SpinMutex::new(RingBuffer::new(), "uart_put"),
+            put_condvar: Condvar::new(),
+            get_buf: SpinMutex::new(RingBuffer::new(), "uart_get"),
+            get_condvar: Condvar::new(),
         };
         uart.init();
         uart
@@ -54,7 +58,7 @@ impl Uart {
     ///
     /// 该函数会一直阻塞等待，直到数据被成功输出为止。
     pub fn put_sync(&self, ch: u8) {
-        let _guard = self.buf.lock();
+        let _guard = self.put_buf.lock();
         loop {
             if self.interface.tx_idle() {
                 break;
@@ -71,36 +75,64 @@ impl Uart {
     ///
     /// 必须在线程中调用该函数，否则会 panic
     pub fn put(&self, ch: u8) {
-        let mut buf = self.buf.lock();
+        let mut buf = self.put_buf.lock();
         loop {
             if buf.is_full() {
-                buf = self.condvar.wait(buf);
+                buf = self.put_condvar.wait(buf);
             } else {
                 buf.push(ch);
-                self.start_transmission(buf);
+                self.start_put(buf);
                 break;
             }
         }
     }
 
     /// 开始发送数据，直到缓冲区为空或是 UART 繁忙为止
-    fn start_transmission(&self, mut buf: SpinMutexGuard<'_, RingBuffer<u8, BUF_SIZE>>) {
+    fn start_put(&self, mut buf: SpinMutexGuard<'_, RingBuffer<u8, BUF_SIZE>>) {
         while !buf.is_empty() {
             // 如果当前 UART 繁忙，则直接返回
             if !self.interface.tx_idle() {
-                return;
+                break;
             }
             let ch = buf.pop().unwrap();
-            self.condvar.notify_all();
             self.interface.put(ch);
         }
+        self.put_condvar.notify_all();
+    }
+
+    /// 读入一个字节
+    ///
+    /// **会堵塞**
+    pub fn get(&self) -> u8 {
+        let mut buf = self.get_buf.lock();
+        loop {
+            if buf.is_empty() {
+                buf = self.get_condvar.wait(buf);
+            } else {
+                return buf.pop().unwrap();
+            }
+        }
+    }
+
+    /// 开始接收数据，直到缓冲区为满或是没有可读入的数据为止
+    fn start_get(&self, mut buf: SpinMutexGuard<'_, RingBuffer<u8, BUF_SIZE>>) {
+        while !buf.is_full() {
+            if !self.interface.rx_ready() {
+                break;
+            }
+            let ch = self.interface.get();
+            buf.push(ch);
+        }
+        self.get_condvar.notify_all();
     }
 
     /// 处理中断
     ///
     /// 当 UART 可以发送数据，或是接收到了数据时，会调用触发中断
     pub fn handle_interrupt(&self) {
-        let buf = self.buf.lock();
-        self.start_transmission(buf);
+        let get_buf = self.get_buf.lock();
+        self.start_get(get_buf);
+        let put_buf = self.put_buf.lock();
+        self.start_put(put_buf);
     }
 }

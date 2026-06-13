@@ -148,7 +148,6 @@ impl VirtualIndexNode {
     /// # Returns
     ///
     /// 返回成功写入的字节数
-    #[expect(unused)]
     pub fn write_at(&self, offset: usize, buf: &[u8]) -> usize {
         let metadata = self.inner_locked.lock().inode().metadata();
         if offset >= metadata.size {
@@ -216,7 +215,6 @@ impl VirtualIndexNode {
     /// # Panics
     ///
     /// - 如果当前 inode 的类型不是文件，则 panic
-    #[expect(unused)]
     pub fn resize(&self, new_size: usize) {
         // 这里也拿 writing_back 锁，这样就能保证 resize 和 sync 不会同时进行
         let _page_lock = self.page_cache.page_lock.lock();
