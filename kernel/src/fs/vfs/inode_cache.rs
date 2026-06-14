@@ -4,10 +4,7 @@ use alloc::boxed::Box;
 
 use crate::{
     fs::vfs::{VirtualIndexNodeInner, VirtualIndexNodeInnerLocked, page_cache::PageCache},
-    process::{
-        kthread::{exit_kthread, spawn_kthread},
-        timer::sleep_with_interval,
-    },
+    process::{kthread::spawn_kthread, timer::sleep_with_interval},
     sync::{condvar::Condvar, mutex::Mutex, spin::SpinMutex},
 };
 
@@ -136,53 +133,47 @@ impl Drop for VirtualIndexNode {
                 // 有可能在销毁过程中，又出现了多次从 inode_cache 中 clone 然后又销毁的情况
                 // 于是会 spawn 出多个销毁线程
                 // 我们认为只有最后那个销毁线程负责完成销毁操作
-                {
-                    // 首先需要加锁，确保同一时间只有一个销毁线程在进行销毁
-                    let _destroying_lock = weak_inode.destroying_lock.lock();
-                    let inner_locked = weak_inode.inner_locked.lock();
-                    // 1. 如果 in_cache 为 false 的话，说明最后的销毁线程已经完成了销毁操作，直接返回
-                    // 2. 如果 destroy_tag 不等于 destroying_id 的话，说明当前线程不是最后一个销毁线程，直接返回
-                    // 注意，对于第二点，即使 destroy_tag 等于 destroying_id，也有可能不是最后一个销毁线程，因为
-                    // 有可能在后面 sync 的过程中，又有人从 inode_cache 中克隆出去了然后释放引用了，那么就会有新的销毁线程
-                    if !inner_locked.in_cache || inner_locked.destroy_tag != destroying_id {
-                        drop(inner_locked);
-                        drop(_destroying_lock);
-                        drop(weak_inode);
-                        exit_kthread();
-                    }
-                    drop(inner_locked);
-                    // 如果在 sync 过程中又出现了新的脏页的出现，那么
-                    // 1. 又出现了新的引用，to_destroy 标记被清除
-                    // 2. to_destroy 标记被清除然后又被设置，此时一定是有了一个新的销毁线程
-                    weak_inode.sync();
-                    // TODO 这里模拟耗时操作
-                    sleep_with_interval(Duration::from_secs(5));
-                    let fs = weak_inode.fs();
-                    let mut inode_cache = fs.inode_cache.lock();
-                    // 现在对 inode_cache 加锁，可以确保 to_destroy 标记不会发生改变，
-                    let mut inner_locked = weak_inode.inner_locked.lock();
-                    // 现在对 inner_locked 加锁，可以确保 destroy_tag 不会发生改变，
 
-                    // 我们只关心 to_destroy 为 true 的情况
-                    // 这种情况下，当前所有的 drop 操作肯定都把 destroy_tag 设置好了，可以直接根据 destroy_tag 判定
-                    // 当前线程是否为最后一个销毁线程
-                    // 1. 只要 to_destroy 为 true，那么此时 strong_count 必然等于 1。因为第二个强引用在生成
-                    //    时，必然是从 inode_cache 中克隆出来的，如果克隆对 inode_cache 的加锁先于这里，那么这里再
-                    //    拿到锁，看到的 to_destroy 必然是为 false 的。反之，那个克隆拿到 inode_cache 的锁之后，当
-                    //    前 inode 实例已经被释放了
-                    // 2. 此时不会出现有 drop 但是还没更新 destroy_tag 的情况，因为如果有 drop，如果这个 drop 先于
-                    //    这里对 inner_locked 加锁的话，这里再拿到锁肯定是看到正确的 destroy_tag 了。如果这里先于
-                    //    那个 drop 对 inner_locked 加锁的话，to_destroy 必然是为 false 的
-                    if inner_locked.destroy_tag == destroying_id && inner_locked.to_destroy {
-                        let cached_inode = inode_cache.remove(&weak_inode.id).unwrap();
-                        inner_locked.in_cache = false;
-                        drop(inner_locked);
-                        // cached_inode 在 drop 时仍需要对 inner_locked 加锁，所以这里先释放 cached_inode
-                        drop(cached_inode);
-                    }
+                // 首先需要加锁，确保同一时间只有一个销毁线程在进行销毁
+                let _destroying_lock = weak_inode.destroying_lock.lock();
+                let inner_locked = weak_inode.inner_locked.lock();
+                // 1. 如果 in_cache 为 false 的话，说明最后的销毁线程已经完成了销毁操作，直接返回
+                // 2. 如果 destroy_tag 不等于 destroying_id 的话，说明当前线程不是最后一个销毁线程，直接返回
+                // 注意，对于第二点，即使 destroy_tag 等于 destroying_id，也有可能不是最后一个销毁线程，因为
+                // 有可能在后面 sync 的过程中，又有人从 inode_cache 中克隆出去了然后释放引用了，那么就会有新的销毁线程
+                if !inner_locked.in_cache || inner_locked.destroy_tag != destroying_id {
+                    return;
                 }
-                drop(weak_inode);
-                exit_kthread();
+                drop(inner_locked);
+                // 如果在 sync 过程中又出现了新的脏页的出现，那么
+                // 1. 又出现了新的引用，to_destroy 标记被清除
+                // 2. to_destroy 标记被清除然后又被设置，此时一定是有了一个新的销毁线程
+                weak_inode.sync();
+                // TODO 这里模拟耗时操作
+                sleep_with_interval(Duration::from_secs(5));
+                let fs = weak_inode.fs();
+                let mut inode_cache = fs.inode_cache.lock();
+                // 现在对 inode_cache 加锁，可以确保 to_destroy 标记不会发生改变，
+                let mut inner_locked = weak_inode.inner_locked.lock();
+                // 现在对 inner_locked 加锁，可以确保 destroy_tag 不会发生改变，
+
+                // 我们只关心 to_destroy 为 true 的情况
+                // 这种情况下，当前所有的 drop 操作肯定都把 destroy_tag 设置好了，可以直接根据 destroy_tag 判定
+                // 当前线程是否为最后一个销毁线程
+                // 1. 只要 to_destroy 为 true，那么此时 strong_count 必然等于 1。因为第二个强引用在生成
+                //    时，必然是从 inode_cache 中克隆出来的，如果克隆对 inode_cache 的加锁先于这里，那么这里再
+                //    拿到锁，看到的 to_destroy 必然是为 false 的。反之，那个克隆拿到 inode_cache 的锁之后，当
+                //    前 inode 实例已经被释放了
+                // 2. 此时不会出现有 drop 但是还没更新 destroy_tag 的情况，因为如果有 drop，如果这个 drop 先于
+                //    这里对 inner_locked 加锁的话，这里再拿到锁肯定是看到正确的 destroy_tag 了。如果这里先于
+                //    那个 drop 对 inner_locked 加锁的话，to_destroy 必然是为 false 的
+                if inner_locked.destroy_tag == destroying_id && inner_locked.to_destroy {
+                    let cached_inode = inode_cache.remove(&weak_inode.id).unwrap();
+                    inner_locked.in_cache = false;
+                    drop(inner_locked);
+                    // cached_inode 在 drop 时仍需要对 inner_locked 加锁，所以这里先释放 cached_inode
+                    drop(cached_inode);
+                }
             });
         } else if inner_locked.weak_count + inner_locked.strong_count == 0 {
             // 说明 strong_count 和 weak_count 都为 0，此时就可以安全回收内存了

@@ -167,4 +167,27 @@ impl CPUManager {
         }
         task
     }
+
+    /// 退出当前任务
+    ///
+    /// # Preconditions
+    ///
+    /// - 调用前应确保应该 drop 掉的东西全都 drop 了，否则会出现资源泄露
+    pub fn exit_current_task() -> ! {
+        let task = CPUManager::current_task().expect("exit_kthread: current_task is None");
+        let mut task_inner = task.lock();
+        // SAFETY: 当前正在对 task_inner 加锁，所以中断还是关闭的
+        let cpu = unsafe { CPUManager::current_cpu() };
+        let current_context = &mut task_inner.context as *mut _;
+        // 下面行为的原因见 CPUManager::yield_current_task 的注释
+        // SAFETY: 调度循环会进行解锁
+        unsafe { task_inner.leak() };
+        drop(task_inner);
+        drop(task);
+        // 直接返回调度循环，由于我们没有把当前的任务放到调度队列里，因此该任务不会被再次调度了
+        // 理论上当前 task 仅剩挂在 CPU 上的引用，回到调度循环后这唯一的引用也没了，于是整个
+        // 任务会被释放掉
+        cpu.go_scheduler(current_context);
+        unreachable!()
+    }
 }

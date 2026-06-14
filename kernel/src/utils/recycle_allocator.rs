@@ -1,7 +1,7 @@
 use alloc::collections::btree_set::BTreeSet;
 
 pub struct RecycleAllocator {
-    /// 已经分配出去的 id 的数量
+    /// 还没被分配过的最小 id
     current: usize,
     /// 回收的 id
     recycled: BTreeSet<usize>,
@@ -34,5 +34,9 @@ impl RecycleAllocator {
             id
         );
         self.recycled.insert(id);
+    }
+    /// 当前分配出去的数量
+    pub fn count(&self) -> usize {
+        self.current - self.recycled.len()
     }
 }
