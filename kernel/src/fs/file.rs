@@ -3,7 +3,8 @@ use alloc::sync::Arc;
 use crate::{
     console::{Stdin, Stdout},
     fs::vfs::{VirtualFile, lookup},
-    process::process::ProcessControlBlock,
+    process::ProcessResource,
+    sync::spin::SpinMutex,
 };
 
 pub enum FileSeekMethod {
@@ -22,7 +23,7 @@ pub trait File: Send + Sync {
     fn seek(&self, method: FileSeekMethod) -> Option<usize>;
 }
 
-impl ProcessControlBlock {
+impl SpinMutex<ProcessResource> {
     /// 在进程中打开一个文件，返回文件描述符
     pub fn open_file(&self, path: &str) -> Option<u64> {
         let file: Arc<dyn File>;
@@ -35,19 +36,19 @@ impl ProcessControlBlock {
             let inode = lookup(cwd, path)?;
             file = Arc::new(VirtualFile::new(inode));
         }
-        let mut inner = self.lock();
-        let fd = inner.avail_fd.alloc();
-        if fd >= inner.fd_table.len() {
-            inner.fd_table.push(Some(file));
+        let mut resource = self.lock();
+        let fd = resource.avail_fd.alloc();
+        if fd >= resource.fd_table.len() {
+            resource.fd_table.push(Some(file));
         } else {
-            inner.fd_table[fd] = Some(file);
+            resource.fd_table[fd] = Some(file);
         }
         Some(fd as u64)
     }
 
     pub fn get_file(&self, fd: u64) -> Option<Arc<dyn File>> {
-        let inner = self.lock();
-        inner
+        let resource = self.lock();
+        resource
             .fd_table
             .get(fd as usize)
             .and_then(|f| f.as_ref().cloned())

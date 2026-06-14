@@ -18,10 +18,7 @@ use crate::{
     },
     mm::{KERNEL_SPACE, MemoryManagementArch},
     process::{
-        ProcessManager,
-        cpu::CPUManager,
-        kthread::{exit_kthread, spawn_kthread},
-        schedule::schedule_loop,
+        ProcessManager, cpu::CPUManager, kthread::spawn_kthread, schedule::schedule_loop,
         timer::sleep_with_interval,
     },
 };
@@ -83,14 +80,14 @@ pub extern "C" fn kernel_main() {
 }
 
 /// 第一个内核线程
-pub fn kthread_main() -> ! {
+pub fn kthread_main() {
     // 打印 LOGO，顺带调用 ROOT_FS 完成根文件系统的初始化
     let logo = lookup(ROOT_FS.root(), "logo.txt").unwrap();
     let mut logo_buf = vec![0u8; logo.metadata().size];
     logo.read_at(0, &mut logo_buf);
     println!("{}", String::from_utf8_lossy(logo_buf.as_slice()));
     // 设置内核进程的工作目录
-    let process = ProcessManager::current();
+    let process = ProcessManager::current_resource();
     process.set_cwd(ROOT_FS.root());
 
     // 初始化块设备
@@ -108,10 +105,9 @@ pub fn kthread_main() -> ! {
     let mut file_buf = vec![0u8; file_len];
     file.read(&mut file_buf).unwrap();
     println!("{}", String::from_utf8_lossy(file_buf.as_slice()));
-    exit_kthread();
 }
 
-pub fn kthread_test() -> ! {
+pub fn kthread_test() {
     let task = CPUManager::current_task().expect("kthread_main: current_task is None");
     println!("hello, world! {}", task.id);
     for i in 0..5 {
@@ -121,11 +117,10 @@ pub fn kthread_test() -> ! {
     for i in 0..10 {
         spawn_kthread(move || {
             println!("hello, world! {}", i);
-            exit_kthread();
         });
     }
 
-    let process = ProcessManager::current();
+    let process = ProcessManager::current_resource();
     let fd = process.open_file("stdin").unwrap();
     let stdin = process.get_file(fd).unwrap();
     let fd = process.open_file("stdout").unwrap();
