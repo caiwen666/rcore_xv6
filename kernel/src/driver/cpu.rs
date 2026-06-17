@@ -1,3 +1,5 @@
+use core::sync::atomic::AtomicUsize;
+
 /// 支持的最大 CPU 数量
 ///
 /// TODO 扫描设备树来动态获取
@@ -16,3 +18,6 @@ struct AlignedBootStack([u8; BOOT_STACK_SIZE * MAX_CPU_COUNT]);
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".data.boot_stack")]
 static BOOT_STACK: AlignedBootStack = AlignedBootStack([0; BOOT_STACK_SIZE * MAX_CPU_COUNT]);
+
+/// 在线的 CPU 数量
+pub static ONLINE_CPU_COUNT: AtomicUsize = AtomicUsize::new(0);
