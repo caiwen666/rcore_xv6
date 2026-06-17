@@ -69,7 +69,8 @@ impl MemoryManagementArch for RiscV64MMArch {
         }
 
         // 确保页表的修改在 IPI 发出之前对其他 CPU 可见
-        unsafe { core::arch::asm!("fence w,w") };
+        // 前面对页表的修改是主存写，后面对 CLINT 写来发起中断是设备写，要用 o
+        unsafe { core::arch::asm!("fence w,ow") };
 
         // 向每个目标 CPU 的 CLINT MSIP 寄存器写 1，触发机器软件中断（IPI）
         for hart in 0..online_cpu_count {
