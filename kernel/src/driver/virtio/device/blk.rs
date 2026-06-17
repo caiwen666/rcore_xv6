@@ -189,6 +189,7 @@ impl<T: Transport> VirtIOBlk<T> {
                 KERNEL_SPACE
                     .lock()
                     .translate_vaddr(VirtAddr::from_ref(&status))
+                    .unwrap()
                     .inner() as u64,
                 1,
                 DescFlags::WRITE,

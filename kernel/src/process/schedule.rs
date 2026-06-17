@@ -49,17 +49,20 @@ pub unsafe fn schedule_loop() -> ! {
     loop {
         IrqArch::enable_interrupt();
         if let Some(task) = TaskScheduler::pop() {
-            cpu.current_task = Some(task.clone());
             let mut task_inner = task.lock();
+            cpu.current_task = Some(task.clone());
             task_inner.status = TaskStatus::Running;
             // 不用释放 task_inner
             // 如果这里的切换回到了 CPU::go_scheduler，
             // 其要求必须是拿住线程的锁的，所以 CPU::go_scheduler 的调用者会释放
             // 如果这里的切换去到了 task_entry，这个函数最开始也会把锁释放掉
-            IrqArch::switch_context(
-                &mut cpu.idle_task_context as *mut _,
-                &mut task_inner.context as *mut _,
-            );
+            unsafe {
+                // SAFETY: 当前持有了 task_inner 的锁，所以中断是关闭的
+                IrqArch::switch_context(
+                    &mut cpu.idle_task_context as *mut _,
+                    &mut task_inner.task_context as *mut _,
+                );
+            }
             // 到这里说明任务调度完毕了
             cpu.current_task = None;
         }
@@ -76,8 +79,11 @@ pub fn task_entry() {
         .expect("task_entry: current_task is None");
     unsafe { task.unlock() };
     if let Some(kthread_entry) = unsafe { task.kthread_entry.take() } {
+        // 进入 kthread_entry 之后就不再返回了，所以需要提前把 task 释放掉
+        drop(task);
         IrqArch::enable_interrupt();
         kthread_entry();
     }
-    unimplemented!()
+    drop(task);
+    IrqArch::return_to_user();
 }

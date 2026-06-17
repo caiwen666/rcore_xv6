@@ -2,6 +2,7 @@ mod init;
 mod pte;
 
 use core::sync::atomic::Ordering;
+use riscv::register::satp::{self, Satp};
 
 use crate::{
     arch::{cpu::cpu_id, interrupt::TLB_SHOOTDOWN_ACK, mm::pte::Sv39PTE},
@@ -34,14 +35,8 @@ impl MemoryManagementArch for RiscV64MMArch {
     }
 
     fn activate(space: &MemorySpace) {
-        use riscv::register::satp;
-        let mut reg = satp::Satp::from_bits(0);
-        reg.set_mode(satp::Mode::Sv39);
-        // 当前实现直接把页表全刷了，所以 asid 无所谓
-        reg.set_asid(0);
-        reg.set_ppn(unsafe { space.table().paddr().inner() >> 12 });
         unsafe {
-            riscv::register::satp::write(reg);
+            riscv::register::satp::write(make_satp(space));
             core::arch::asm!("sfence.vma");
         }
     }
@@ -94,4 +89,13 @@ impl MemoryManagementArch for RiscV64MMArch {
             core::hint::spin_loop();
         }
     }
+}
+
+pub fn make_satp(space: &MemorySpace) -> Satp {
+    let mut reg = satp::Satp::from_bits(0);
+    reg.set_mode(satp::Mode::Sv39);
+    // 当前实现直接把页表全刷了，所以 asid 无所谓
+    reg.set_asid(0);
+    reg.set_ppn(unsafe { space.table().paddr().inner() >> 12 });
+    reg
 }

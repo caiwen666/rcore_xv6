@@ -6,10 +6,16 @@ pub mod schedule;
 pub mod task;
 pub mod timer;
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::{
-    fs::{file::File, vfs::VirtualIndexNode},
-    mm::mem_space::MemorySpace,
-    process::{cpu::CPUManager, task::TaskControlBlock},
+    fs::{
+        ROOT_FS,
+        file::File,
+        vfs::{VirtualIndexNode, lookup},
+    },
+    mm::{address::VirtAddr, mem_space::MemorySpace},
+    process::{cpu::CPUManager, schedule::TaskScheduler, task::TaskControlBlock},
     sync::spin::{SpinMutex, SpinMutexGuard},
     utils::RecycleAllocator,
 };
@@ -18,12 +24,14 @@ use alloc::{
     vec::Vec,
 };
 use lazy_static::lazy_static;
+use xmas_elf::ElfFile;
 
 lazy_static! {
     static ref KERNEL_PROCESS: Arc<ProcessControlBlock> = ProcessManager::init_kernel_process();
     static ref KERNEL_PROCESS_RESOURCE: Arc<SpinMutex<ProcessResource>> =
         ProcessManager::init_kernel_process_resource();
 }
+static PID_ALLOCATOR: AtomicUsize = AtomicUsize::new(1);
 
 pub struct ProcessManager;
 
@@ -79,6 +87,53 @@ impl ProcessManager {
     }
 }
 
+impl ProcessManager {
+    /// 根据 elf 文件创建一个进程，并为进程启动一个线程，并将进程加入到调度循环中。
+    ///
+    /// # Panics
+    ///
+    /// 如果 elf 文件解析失败，则 panic
+    pub fn new_elf_process(elf_data: &[u8]) -> Arc<ProcessControlBlock> {
+        let elf =
+            ElfFile::new(elf_data).unwrap_or_else(|e| panic!("Failed to parse elf file: {}", e));
+        let memory_space = MemorySpace::from_elf(&elf);
+        let process = Arc::new(ProcessControlBlock {
+            pid: PID_ALLOCATOR.fetch_add(1, Ordering::Relaxed),
+            inner: SpinMutex::new(
+                ProcessControlBlockInner {
+                    status: ProcessStatus::Running,
+                },
+                "process_inner",
+            ),
+        });
+        // 默认把工作目录设在 /root
+        let cwd = lookup(ROOT_FS.root(), "root").unwrap();
+        let process_resource = Arc::new(SpinMutex::new(
+            ProcessResource {
+                memory_space: Some(memory_space),
+                tasks: Vec::new(),
+                avail_task_id: RecycleAllocator::new(),
+                cwd: Some(cwd),
+                fd_table: Vec::new(),
+                avail_fd: RecycleAllocator::new(),
+            },
+            "process_resource",
+        ));
+        process_resource.open_file("stdin");
+        process_resource.open_file("stdout");
+        // 标准错误流沿用标准输出
+        process_resource.open_file("stdout");
+        let task = TaskControlBlock::new(
+            process.clone(),
+            process_resource,
+            VirtAddr::new(elf.header.pt2.entry_point() as usize),
+        );
+
+        TaskScheduler::push(task);
+        process
+    }
+}
+
 /// 进程基本信息
 ///
 /// - 全局进程列表、父进程、进程下的所有线程的 TCB，这些会持有 PCB 的强引用
@@ -114,7 +169,6 @@ impl ProcessControlBlock {
 /// 就会被回收了。
 pub struct ProcessResource {
     /// 如果是内核进程，则该字段为 None
-    #[expect(unused)]
     pub memory_space: Option<MemorySpace>,
     /// 任务列表
     ///

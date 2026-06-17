@@ -16,14 +16,18 @@ pub static JIFFIES: AtomicUsize = AtomicUsize::new(0);
 /// # Safety
 ///
 /// 调用时需要保证中断关闭
-pub unsafe fn timer_handler(_from_kernel: bool) {
+pub unsafe fn timer_handler(from_kernel: bool) {
     // SAFETY: 当前函数的调用者已经保证了关闭了中断
     let cpu = unsafe { CPUManager::current_cpu() };
     if cpu.id == 0 {
         JIFFIES.fetch_add(1, Ordering::Relaxed);
         check_sleep_timer();
     }
-    cpu.yield_current_task();
+    // 如果从用户态过来的，当前 CPU 上一定是有任务的
+    // 如果从内核态过来的，当前 CPU 上未必有任务，需要再判断一下
+    if !from_kernel || (from_kernel && cpu.current_task.is_some()) {
+        cpu.yield_current_task();
+    }
 }
 
 #[inline]

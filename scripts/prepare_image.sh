@@ -8,6 +8,7 @@ IMAGE_DIR="${IMAGE_DIR:-${ROOT_DIR}/image}"
 # 原路径支持 shell 通配符，例如 ${ROOT_DIR}/path/to/dir/*
 COPY_LIST=(
 	"${ROOT_DIR}/kernel/Cargo.lock:Cargo.lock"
+	"${ROOT_DIR}/user/target/hello:hello"
 )
 
 copy_entry() {

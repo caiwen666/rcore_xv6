@@ -1,5 +1,7 @@
 # 内核目录
 KERNEL = kernel
+# 用户程序目录
+USER = user
 # 产物存放的目录
 OUTPUT = target
 # ext2 镜像
@@ -50,9 +52,12 @@ QEMU_FLAGS += -smp $(CPUS)
 QEMU_FLAGS += -drive file=$(EXT2_IMG),if=none,format=raw,id=hd0
 QEMU_FLAGS += -device virtio-blk-device,drive=hd0,bus=virtio-mmio-bus.0
 
-.PHONY: build run debug gdb image
+.PHONY: build run debug gdb user image
 
-image:
+user:
+	$(MAKE) -C $(USER)
+
+image: user
 	IMAGE_DIR=$(IMAGE_DIR) bash scripts/prepare_image.sh
 	rm -f $(EXT2_IMG)
 	dd if=/dev/zero of=$(EXT2_IMG) bs=1M count=$(EXT2_SIZE_MB) status=none

@@ -2,3 +2,5 @@
 target
 ext2.img
 /image
+compile_commands.json
+.cache

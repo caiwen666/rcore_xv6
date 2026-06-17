@@ -1,16 +1,24 @@
 use crate::{
+    arch::MMArch,
+    mm::{
+        MemoryManagementArch,
+        address::{PhysAddr, VirtAddr},
+        mem_space::{MemoryArea, MemoryAreaType, MemoryPermission},
+    },
     process::{
         KERNEL_PROCESS, KERNEL_PROCESS_RESOURCE, ProcessControlBlock, ProcessResource,
         ProcessStatus,
-        context::{ArchTaskContext, TaskContext},
+        context::{
+            ArchTaskContext, ArchTrapContext, TRAP_CONTEXT_PAGE_COUNT, TaskContext, TrapContext,
+        },
         kthread::KthreadEntryCell,
-        mm::{KernelStack, KernelStackAllocator},
+        mm::{KernelStack, KernelStackAllocator, trap_context_vaddr, ustack_vaddr},
     },
     sync::spin::{SpinMutex, SpinMutexGuard},
 };
 use alloc::sync::Arc;
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum TaskStatus {
     /// 准备运行
     Ready,
@@ -33,11 +41,13 @@ pub struct TaskControlBlock {
     /// 不能通过 `take()` 的返回值是否为 `Some` 来长期判断该 task 是否为内核线程。
     pub(super) kthread_entry: KthreadEntryCell,
     inner: SpinMutex<TaskControlBlockInner>,
+    /// 内核线程没有 trap 上下文
+    trap_context_paddr: Option<PhysAddr>,
 }
 
 pub struct TaskControlBlockInner {
     pub status: TaskStatus,
-    pub context: ArchTaskContext,
+    pub task_context: ArchTaskContext,
 }
 
 impl TaskControlBlock {
@@ -57,6 +67,12 @@ impl TaskControlBlock {
         self.process_resource.clone()
     }
 
+    pub fn trap_context(&self) -> &mut ArchTrapContext {
+        self.trap_context_paddr.unwrap().get_mut()
+    }
+}
+
+impl TaskControlBlock {
     pub fn new_kthread(entry: KthreadEntryCell) -> Arc<Self> {
         let kstack = KernelStackAllocator::alloc();
         let (_, kstack_top) = kstack.range();
@@ -71,16 +87,79 @@ impl TaskControlBlock {
             inner: SpinMutex::new(
                 TaskControlBlockInner {
                     status: TaskStatus::Ready,
-                    context: ArchTaskContext::new(kstack_top),
+                    task_context: ArchTaskContext::new(kstack_top),
                 },
                 "task_control_block_inner",
             ),
+            trap_context_paddr: None,
         });
         if id >= resource.tasks.len() {
             resource.tasks.push(Some(Arc::downgrade(&task)));
         } else {
             resource.tasks[id] = Some(Arc::downgrade(&task));
         }
+        task
+    }
+
+    /// 在指定进程下创建线程。线程的默认状态为 [TaskStatus::Ready]。不会自动将线程加入调度器。
+    pub fn new(
+        process: Arc<ProcessControlBlock>,
+        process_resource: Arc<SpinMutex<ProcessResource>>,
+        entry: VirtAddr,
+    ) -> Arc<Self> {
+        let kstack = KernelStackAllocator::alloc();
+        let (_, kstack_high) = kstack.range();
+
+        let mut resource = process_resource.lock();
+        let id = resource.avail_task_id.alloc();
+        // 分配用户栈
+        let (ustack_low, ustack_high) = ustack_vaddr(id);
+        let memory_space = resource.memory_space.as_mut().unwrap();
+        memory_space.push(MemoryArea::new(
+            ustack_low,
+            ustack_high - ustack_low,
+            MemoryPermission::Readable
+                | MemoryPermission::Writable
+                | MemoryPermission::UserAccessible,
+            MemoryAreaType::Private,
+            "ustack",
+        ));
+        // 分配 trap 上下文
+        memory_space.push(MemoryArea::new(
+            trap_context_vaddr(id),
+            TRAP_CONTEXT_PAGE_COUNT * MMArch::PAGE_SIZE,
+            // 不给 U 权限
+            MemoryPermission::Readable | MemoryPermission::Writable,
+            MemoryAreaType::Private,
+            "trap_context",
+        ));
+        // 拿到 trap 上下文的物理地址
+        let trap_context_paddr = memory_space
+            .translate_vaddr(trap_context_vaddr(id))
+            .unwrap();
+
+        drop(resource);
+        let task = Arc::new(Self {
+            process,
+            process_resource,
+            kstack,
+            id,
+            kthread_entry: KthreadEntryCell::empty(),
+            inner: SpinMutex::new(
+                TaskControlBlockInner {
+                    status: TaskStatus::Ready,
+                    task_context: ArchTaskContext::new(kstack_high),
+                },
+                "task_control_block_inner",
+            ),
+            trap_context_paddr: Some(trap_context_paddr),
+        });
+
+        // 写入 trap 上下文
+        *task.trap_context() = ArchTrapContext::new(kstack_high)
+            .set_ustack(ustack_high)
+            .set_pc(entry);
+
         task
     }
 }

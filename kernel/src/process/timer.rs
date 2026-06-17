@@ -68,7 +68,7 @@ pub fn sleep_with_expire(expire_us: usize) {
     // 拿到 task_inner 之后再释放 queue，防止我们还没完成睡眠就被唤醒了
     drop(queue);
     task_inner.status = TaskStatus::Blocked;
-    let current_context = &mut task_inner.context as *mut _;
+    let current_context = &mut task_inner.task_context as *mut _;
     // 有可能回到调度循环之后，当前任务被杀死，然后永远回不来了
     // 所以这里需要搞一个类似 [CPU::yield_current_task] 的操作
     unsafe { task_inner.leak() };
