@@ -7,6 +7,7 @@ use crate::{
         page_table::{PageTable, PageTableEntry},
     },
     println,
+    utils::BlockIterator,
 };
 use alloc::collections::btree_map::BTreeMap;
 use bitflags::bitflags;
@@ -99,6 +100,10 @@ impl MemoryArea {
     /// 创建内存区域
     ///
     /// 实际大小会向上对齐到整页大小
+    ///
+    /// # Panics
+    ///
+    /// `base_vaddr` 必须是 [MMArch::PAGE_SIZE] 的倍数，否则会 panic
     pub fn new(
         base_vaddr: VirtAddr,
         size: usize,
@@ -106,6 +111,11 @@ impl MemoryArea {
         area_type: MemoryAreaType,
         name: &'static str,
     ) -> MemoryArea {
+        assert!(
+            base_vaddr.inner().is_multiple_of(MMArch::PAGE_SIZE),
+            "MemoryArea::new: base vaddr is not page aligned {:?}",
+            base_vaddr
+        );
         let count = size.div_ceil(MMArch::PAGE_SIZE);
         match area_type {
             MemoryAreaType::Private => {
@@ -136,30 +146,32 @@ impl MemoryArea {
         }
     }
 
-    /// 写入数据到内存区域
+    /// 写入数据到内存区域的 `offset` 偏移处
     ///
     /// # Panics
     ///
     /// - 如果内存区域类型不为 [MemoryAreaType::Private]，则 panic
-    /// - 如果 `data` 的长度大于内存区域的大小，则 panic
-    pub fn write_data(&mut self, data: &[u8]) {
+    /// - 如果 `offset` 加上 `data` 的长度大于内存区域的大小，则 panic
+    pub fn write_data(&mut self, offset: usize, data: &[u8]) {
         assert!(
             self.area_type == MemoryAreaType::Private,
             "Memory area type is not private"
         );
         assert!(
-            data.len() <= self.size,
+            offset + data.len() <= self.size,
             "Data length is greater than memory area size"
         );
         let mut pos = 0;
-        for frame in self.private_frames.values_mut() {
-            let frame = frame.as_mut_slice();
-            let size = frame.len().min(data.len() - pos);
-            frame[..size].copy_from_slice(&data[pos..pos + size]);
-            pos += size;
-            if pos == data.len() {
-                break;
+        let mut frame_iter = self.private_frames.values_mut().enumerate();
+        for block in BlockIterator::new(MMArch::PAGE_SIZE, offset, data.len()) {
+            let (mut idx, mut frame) = frame_iter.next().unwrap();
+            while idx != block.block_id() {
+                (idx, frame) = frame_iter.next().unwrap();
             }
+            let frame = frame.as_mut_slice();
+            frame[block.offset()..block.offset() + block.size()]
+                .copy_from_slice(&data[pos..pos + block.size()]);
+            pos += block.size();
         }
     }
 }
@@ -457,14 +469,18 @@ impl MemorySpace {
                     permission |= MemoryPermission::Executable;
                 }
                 permission |= MemoryPermission::UserAccessible;
+                let vaddr = ph.virtual_addr() as usize / MMArch::PAGE_SIZE * MMArch::PAGE_SIZE;
+                let offset = ph.virtual_addr() as usize % MMArch::PAGE_SIZE;
+                let size = offset + ph.mem_size() as usize;
                 let mut area = MemoryArea::new(
-                    VirtAddr::new(ph.virtual_addr() as usize),
-                    ph.mem_size() as usize,
+                    VirtAddr::new(vaddr),
+                    size,
                     permission,
                     MemoryAreaType::Private,
                     "elf",
                 );
                 area.write_data(
+                    offset,
                     &elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize],
                 );
                 memory_space.push(area);

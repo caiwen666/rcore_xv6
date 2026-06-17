@@ -8,8 +8,8 @@ trap_from_user:
     # 开始写入 trap 上下文
     sd x1, 1*8(sp)
     sd x3, 3*8(sp)
-    .set n, 5
-    .rept 27
+    .set n, 4
+    .rept 28
         SAVE_REG %n
         .set n, n+1
     .endr
@@ -75,8 +75,8 @@ __return_to_user:
     mv sp, a0
     ld x1, 1*8(sp)
     ld x3, 3*8(sp)
-    .set n, 5
-    .rept 27
+    .set n, 4
+    .rept 28
         LOAD_REG %n
         .set n, n+1
     .endr

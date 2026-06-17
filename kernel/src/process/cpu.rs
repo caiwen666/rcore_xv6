@@ -123,6 +123,9 @@ impl CPU {
         if core::hint::unlikely(self.spinning_state.count != 1) {
             panic!("to_scheduler: spinning_state.count != 1");
         }
+        // 这里需要保存当前 CPU 上的自旋锁的状态，并在调度回来之后恢复
+        // 自旋锁的状态实际上并不是属于 CPU 的，而是属于当前任务的
+        // 这里只需要保存一下施加第一个自旋锁之前的中断状态即可，因为当前自旋锁的适量必然是 1
         let interrupted = self.spinning_state.interrupted;
         // 这里会回到调度循环中，但是调度循环那边，在调度该任务的时候会持有一个锁
         // 这里的锁会在调度循环那里被释放掉

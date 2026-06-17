@@ -138,10 +138,9 @@ impl TaskControlBlock {
             .translate_vaddr(trap_context_vaddr(id))
             .unwrap();
 
-        drop(resource);
         let task = Arc::new(Self {
             process,
-            process_resource,
+            process_resource: process_resource.clone(),
             kstack,
             id,
             kthread_entry: KthreadEntryCell::empty(),
@@ -159,6 +158,12 @@ impl TaskControlBlock {
         *task.trap_context() = ArchTrapContext::new(kstack_high)
             .set_ustack(ustack_high)
             .set_pc(entry);
+
+        if id >= resource.tasks.len() {
+            resource.tasks.push(Some(Arc::downgrade(&task)));
+        } else {
+            resource.tasks[id] = Some(Arc::downgrade(&task));
+        }
 
         task
     }
