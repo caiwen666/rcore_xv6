@@ -4,7 +4,6 @@
 #![no_main]
 #![feature(negative_impls)]
 #![feature(likely_unlikely)]
-#![feature(box_as_ptr)]
 #![feature(never_type)]
 
 use crate::{
