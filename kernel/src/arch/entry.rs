@@ -44,9 +44,9 @@ extern "C" fn init_cpu() -> ! {
     // 把所有的中断和异常都交给 Supervisor 模式处理
     let medeleg = RiscvMedeleg::Medeleg::from_bits(usize::MAX);
     unsafe { RiscvMedeleg::write(medeleg) };
-    // 有的 riscv 实现不会把 M 模式的时钟中断委托给 S 模式，所以这里就直接不委托了
-    // M 模式的时钟中断是第 7 位
-    let mideleg = RiscvMideleg::Mideleg::from_bits(usize::MAX ^ (1 << 7));
+    // M 模式的时钟中断（第 7 位）和机器软件中断（第 3 位，用于 IPI / TLB shootdown）
+    // 都不委托给 S 模式，直接在 M 模式处理
+    let mideleg = RiscvMideleg::Mideleg::from_bits(usize::MAX ^ (1 << 7) ^ (1 << 3));
     unsafe { RiscvMideleg::write(mideleg) };
 
     // 让 Supervisor 模式能够接收到外部中断/时钟中断和软件中断
@@ -65,8 +65,8 @@ extern "C" fn init_cpu() -> ! {
     let hart_id = RiscvMhartid::read();
     unsafe { super::register::tp::write_tp(hart_id) };
 
-    // 初始化时钟中断
-    super::interrupt::init_timer(hart_id);
+    // 初始化 M 模式的陷入处理（时钟中断 + IPI）
+    super::interrupt::init_machine_trap(hart_id);
 
     // 跳到内核的入口，并进入 Supervisor 模式
     unsafe { core::arch::asm!("mret", options(noreturn)) };

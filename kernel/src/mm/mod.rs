@@ -48,6 +48,16 @@ pub trait MemoryManagementArch {
 
     /// 进入某个内存空间
     fn activate(space: &MemorySpace);
+
+    /// 刷新当前 CPU 的 TLB
+    fn local_flush_tlb();
+
+    /// 请求其他 CPU 刷新 TLB
+    ///
+    /// # Safety
+    ///
+    /// 调用时需要关闭中断
+    unsafe fn tlb_shootdown();
 }
 
 /// 物理内存区域

@@ -211,6 +211,13 @@ impl MemorySpace {
         false
     }
 
+    fn flush(&mut self) {
+        MMArch::local_flush_tlb();
+        // SAFETY: flush 仅在 push/remove 中被调用，而它们都通过 KERNEL_SPACE.lock() 等自旋锁进入，
+        // 此时中断已经关闭
+        unsafe { MMArch::tlb_shootdown() };
+    }
+
     /// 添加一个内存区域
     pub fn push(&mut self, area: MemoryArea) {
         // 需要确保没重叠
@@ -237,6 +244,7 @@ impl MemorySpace {
             }
         }
         self.areas.insert(area.base_vaddr(), area);
+        self.flush();
     }
 
     /// # Safety
@@ -298,6 +306,7 @@ impl MemorySpace {
                 .expect("Virtual address not in current page table");
             if table.level() == 0 {
                 table.set(index, PTE::empty());
+                break;
             } else {
                 table = unsafe {
                     table
@@ -323,6 +332,7 @@ impl MemorySpace {
             let vaddr = area.base_vaddr() + i * MMArch::PAGE_SIZE;
             self.unmap(vaddr);
         }
+        self.flush();
     }
 
     /// 将当前内存空间的虚拟地址翻译成物理地址

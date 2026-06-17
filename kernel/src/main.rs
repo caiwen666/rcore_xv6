@@ -9,7 +9,7 @@
 
 use crate::{
     arch::{IrqArch, MMArch},
-    driver::{VIRTIO0, enable_plic, init_plic},
+    driver::{VIRTIO0, cpu::ONLINE_CPU_COUNT, enable_plic, init_plic},
     exception::InterruptArch,
     fs::{
         Ext2FileSystem, ROOT_FS,
@@ -48,6 +48,7 @@ pub extern "C" fn kernel_main() {
     static STARTED: AtomicBool = AtomicBool::new(false);
     // SAFETY: 此时中断还没开
     let cpu = unsafe { CPUManager::current_cpu() };
+    ONLINE_CPU_COUNT.fetch_add(1, Ordering::Relaxed);
     if cpu.id == 0 {
         println!("rcore_xv6 kernel is booting");
         // 初始化虚拟内存

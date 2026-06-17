@@ -1,8 +1,14 @@
 mod init;
 mod pte;
 
+use core::sync::atomic::Ordering;
+
 use crate::{
-    arch::mm::pte::Sv39PTE,
+    arch::{cpu::cpu_id, interrupt::TLB_SHOOTDOWN_ACK, mm::pte::Sv39PTE},
+    driver::{
+        CLINT_ADDR,
+        cpu::{MAX_CPU_COUNT, ONLINE_CPU_COUNT},
+    },
     mm::{MemoryManagementArch, mem_space::MemorySpace},
 };
 
@@ -37,6 +43,54 @@ impl MemoryManagementArch for RiscV64MMArch {
         unsafe {
             riscv::register::satp::write(reg);
             core::arch::asm!("sfence.vma");
+        }
+    }
+
+    #[inline]
+    fn local_flush_tlb() {
+        unsafe {
+            core::arch::asm!("sfence.vma");
+        };
+    }
+
+    unsafe fn tlb_shootdown() {
+        let online_cpu_count = ONLINE_CPU_COUNT.load(Ordering::Relaxed);
+        let me = cpu_id();
+
+        // 在发起 IPI 之前先把每个目标 CPU 的 ACK 计数读出来
+        // 后面发起 IPI 之后，如果目标 CPU 的 ACK 计数发生了改变，就说明目标 CPU 已经完成了一次 TLB shootdown
+        // 即使目标 CPU 的 TLB shootdown 可能不是由于当前 CPU 发起的，但只要刷新了 TLB 就完成了我们的目的
+        let mut snapshot = [0usize; MAX_CPU_COUNT];
+        for hart in 0..online_cpu_count {
+            if hart == me {
+                continue;
+            }
+            snapshot[hart] = TLB_SHOOTDOWN_ACK[hart].load(Ordering::Relaxed);
+        }
+
+        // 确保页表的修改在 IPI 发出之前对其他 CPU 可见
+        unsafe { core::arch::asm!("fence w,w") };
+
+        // 向每个目标 CPU 的 CLINT MSIP 寄存器写 1，触发机器软件中断（IPI）
+        for hart in 0..online_cpu_count {
+            if hart == me {
+                continue;
+            }
+            let msip = CLINT_ADDR + 4 * hart;
+            unsafe { core::ptr::write_volatile(msip as *mut u32, 1) };
+        }
+
+        let mut remaining = ((1 << online_cpu_count) - 1) & !(1 << me);
+        while remaining != 0 {
+            for hart in 0..online_cpu_count {
+                if hart == me {
+                    continue;
+                }
+                if TLB_SHOOTDOWN_ACK[hart].load(Ordering::Relaxed) != snapshot[hart] {
+                    remaining &= !(1 << hart);
+                }
+            }
+            core::hint::spin_loop();
         }
     }
 }
