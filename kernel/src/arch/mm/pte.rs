@@ -46,11 +46,8 @@ impl PageTableEntry for Sv39PTE {
         }
     }
 
-    fn new_non_leaf(paddr: PhysAddr, is_user: bool) -> Self {
-        let mut sv39_flags = Sv39PTEFlags::V;
-        if is_user {
-            sv39_flags.set(Sv39PTEFlags::U, true);
-        }
+    fn new_non_leaf(paddr: PhysAddr) -> Self {
+        let sv39_flags = Sv39PTEFlags::V;
         Sv39PTE {
             bits: (((paddr.inner() as u64) >> 12) << 10) | sv39_flags.bits() as u64,
         }

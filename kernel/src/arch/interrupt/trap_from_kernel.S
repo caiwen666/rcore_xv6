@@ -1,12 +1,5 @@
-.altmacro
-.macro SAVE_REG n
-    sd x\n, \n*8(sp)
-.endm
-.macro LOAD_REG n
-    ld x\n, \n*8(sp)
-.endm
+    # 从内核态陷入内核态，不用放到 .trampoline 里
     .globl trap_from_kernel
-# 从内核态陷入内核态，不用放到 .text.trampoline 里
     .balign 4
 trap_from_kernel:
     # 直接大力保存所有寄存器到栈上

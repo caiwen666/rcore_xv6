@@ -116,4 +116,5 @@ pub fn init() {
         "kernel_phys_mem",
     );
     kernel_space.push(phys_mem_area);
+    kernel_space.map_trampoline();
 }

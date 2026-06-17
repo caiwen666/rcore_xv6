@@ -12,9 +12,7 @@ pub trait PageTableEntry: Clone + Copy + 'static {
     /// 叶子节点，创建后得到的页表项必须满足是有效的
     fn new_leaf(paddr: PhysAddr, permission: MemoryPermission) -> Self;
     /// 非叶子节点，指向下一级的页表物理地址
-    ///
-    /// `is_user` 表示是否为用户态的
-    fn new_non_leaf(paddr: PhysAddr, is_user: bool) -> Self;
+    fn new_non_leaf(paddr: PhysAddr) -> Self;
     /// 空白页表项
     fn empty() -> Self;
     /// 页表项是否有效

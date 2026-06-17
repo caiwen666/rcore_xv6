@@ -96,21 +96,30 @@ pub fn kthread_main() {
     let ext2_mountpoint = lookup(ROOT_FS.root(), "root").unwrap();
     ext2_mountpoint.mount(VirtualFileSystem::new(Ext2FileSystem::new(VIRTIO0.clone())));
 
-    // 测试代码
-    spawn_kthread(kthread_test);
-    let fd = process.open_file("/root/Cargo.lock").unwrap();
+    // 启动第一个进程
+    let fd = process.open_file("/root/hello").unwrap();
     let file = process.get_file(fd).unwrap();
     let file_len = file.seek(FileSeekMethod::End(0)).unwrap();
     file.seek(FileSeekMethod::Absolute(0)).unwrap();
     let mut file_buf = vec![0u8; file_len];
     file.read(&mut file_buf).unwrap();
-    println!("{}", String::from_utf8_lossy(file_buf.as_slice()));
+    ProcessManager::new_elf_process(file_buf.as_slice());
+
+    // 测试代码
+    spawn_kthread(kthread_test);
+    // let fd = process.open_file("/root/Cargo.lock").unwrap();
+    // let file = process.get_file(fd).unwrap();
+    // let file_len = file.seek(FileSeekMethod::End(0)).unwrap();
+    // file.seek(FileSeekMethod::Absolute(0)).unwrap();
+    // let mut file_buf = vec![0u8; file_len];
+    // file.read(&mut file_buf).unwrap();
+    // println!("{}", String::from_utf8_lossy(file_buf.as_slice()));
 }
 
 pub fn kthread_test() {
     let task = CPUManager::current_task().expect("kthread_main: current_task is None");
     println!("hello, world! {}", task.id);
-    for i in 0..5 {
+    for i in 0..3 {
         println!("thread {} countdown: {}", task.id, 5 - i);
         sleep_with_interval(Duration::from_secs(1));
     }
@@ -119,6 +128,7 @@ pub fn kthread_test() {
             println!("hello, world! {}", i);
         });
     }
+    println!("okok");
 
     let process = ProcessManager::current_resource();
     let fd = process.open_file("stdin").unwrap();

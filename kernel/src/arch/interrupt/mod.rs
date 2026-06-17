@@ -1,16 +1,18 @@
 mod context;
 mod handler;
 
-use core::sync::atomic::AtomicUsize;
-
 use crate::{
+    arch::{MMArch, mm::make_satp},
     driver::{
         CLINT_ADDR,
         cpu::{CLOCK_CYCLE, MAX_CPU_COUNT},
     },
     exception::{InterruptArch, timer::TIMER_INTERVAL},
+    mm::{MemoryManagementArch, address::VirtAddr},
+    process::{cpu::CPUManager, mm::trap_context_vaddr},
 };
-use riscv::register::{mie, mscratch, mstatus, mtvec, sstatus, stvec};
+use core::sync::atomic::AtomicUsize;
+use riscv::register::{mie, mscratch, mstatus, mtvec, satp::Satp, sstatus, stvec};
 
 core::arch::global_asm!(include_str!("machine_trap.S"));
 
@@ -18,6 +20,7 @@ pub struct RiscV64InterruptArch;
 
 impl InterruptArch for RiscV64InterruptArch {
     type TaskContext = context::TaskContext;
+    type TrapContext = context::TrapContext;
 
     #[inline]
     fn enable_interrupt() {
@@ -51,11 +54,55 @@ impl InterruptArch for RiscV64InterruptArch {
     }
 
     #[inline]
-    fn switch_context(
+    unsafe fn switch_context(
         current_context: *mut Self::TaskContext,
         next_context: *mut Self::TaskContext,
     ) {
         context::switch_context(current_context, next_context);
+    }
+
+    fn return_to_user() -> ! {
+        RiscV64InterruptArch::disable_interrupt();
+        let cpu = unsafe { CPUManager::current_cpu() };
+        assert!(
+            cpu.spinning_state.count == 0,
+            "Cannot return to user when spinning state is not 0."
+        );
+
+        // 准备函数
+        unsafe extern "C" {
+            fn strampoline();
+            fn __return_to_user();
+            fn trap_from_user();
+        }
+        let trampoline_code_base =
+            (1 << MMArch::VADDR_BITS_COUNT) - MMArch::TRAMPOLINE_PAGE_COUNT * MMArch::PAGE_SIZE;
+        // __return_to_user 函数在跳板部分的地址
+        let f_ptr = trampoline_code_base
+            + (__return_to_user as *const () as usize - strampoline as *const () as usize);
+        let f: fn(VirtAddr, Satp) -> ! = unsafe { core::mem::transmute(f_ptr) };
+
+        // 准备 satp
+        let satp;
+        // 涉及的资源有点多，直接用一个代码块包裹，不用再一个个 drop 了
+        {
+            let current_task = cpu.current_task.as_ref().cloned().unwrap();
+            let process_resource = current_task.process_resource();
+            let process_resource_lock = process_resource.lock();
+            let memory_space = process_resource_lock.memory_space.as_ref().unwrap();
+            satp = make_satp(memory_space);
+        }
+
+        let mut reg_stvec = stvec::read();
+        reg_stvec.set_trap_mode(stvec::TrapMode::Direct);
+        reg_stvec.set_address(
+            trampoline_code_base
+                + (trap_from_user as *const () as usize - strampoline as *const () as usize),
+        );
+        unsafe { stvec::write(reg_stvec) };
+
+        let trap_vaddr = trap_context_vaddr(cpu.current_task.as_ref().unwrap().id);
+        f(trap_vaddr, satp)
     }
 }
 

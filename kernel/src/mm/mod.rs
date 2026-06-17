@@ -4,11 +4,7 @@ pub mod mem_space;
 pub mod page_table;
 
 use crate::{
-    mm::{
-        address::PhysAddr,
-        mem_space::{MemorySpace, MemorySpaceKind},
-        page_table::PageTableEntry,
-    },
+    mm::{address::PhysAddr, mem_space::MemorySpace, page_table::PageTableEntry},
     sync::spin::SpinMutex,
 };
 use lazy_static::lazy_static;
@@ -83,5 +79,5 @@ pub enum PhysMemoryAreaKind {
 
 lazy_static! {
     pub static ref KERNEL_SPACE: SpinMutex<MemorySpace> =
-        SpinMutex::new(MemorySpace::create(MemorySpaceKind::Kernel), "kernel_space");
+        SpinMutex::new(MemorySpace::create(), "kernel_space");
 }

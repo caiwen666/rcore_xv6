@@ -7,10 +7,12 @@ use crate::{
         page_table::{PageTable, PageTableEntry},
     },
     println,
+    utils::BlockIterator,
 };
 use alloc::collections::btree_map::BTreeMap;
 use bitflags::bitflags;
 use core::{fmt::Debug, ops::Bound};
+use xmas_elf::{ElfFile, program::Type};
 
 bitflags! {
     #[derive(Clone, Copy, Eq, PartialEq)]
@@ -98,6 +100,10 @@ impl MemoryArea {
     /// 创建内存区域
     ///
     /// 实际大小会向上对齐到整页大小
+    ///
+    /// # Panics
+    ///
+    /// `base_vaddr` 必须是 [MMArch::PAGE_SIZE] 的倍数，否则会 panic
     pub fn new(
         base_vaddr: VirtAddr,
         size: usize,
@@ -105,13 +111,19 @@ impl MemoryArea {
         area_type: MemoryAreaType,
         name: &'static str,
     ) -> MemoryArea {
+        assert!(
+            base_vaddr.inner().is_multiple_of(MMArch::PAGE_SIZE),
+            "MemoryArea::new: base vaddr is not page aligned {:?}",
+            base_vaddr
+        );
         let count = size.div_ceil(MMArch::PAGE_SIZE);
         match area_type {
             MemoryAreaType::Private => {
                 let mut private_frames = BTreeMap::new();
                 // 不需要连续的物理页
                 for _ in 0..count {
-                    let frame = alloc_frame(1).expect("Failed to allocate memory area: OOM");
+                    let mut frame = alloc_frame(1).expect("Failed to allocate memory area: OOM");
+                    frame.clear();
                     private_frames.insert(frame.addr(), frame);
                 }
                 Self {
@@ -133,6 +145,35 @@ impl MemoryArea {
             },
         }
     }
+
+    /// 写入数据到内存区域的 `offset` 偏移处
+    ///
+    /// # Panics
+    ///
+    /// - 如果内存区域类型不为 [MemoryAreaType::Private]，则 panic
+    /// - 如果 `offset` 加上 `data` 的长度大于内存区域的大小，则 panic
+    pub fn write_data(&mut self, offset: usize, data: &[u8]) {
+        assert!(
+            self.area_type == MemoryAreaType::Private,
+            "Memory area type is not private"
+        );
+        assert!(
+            offset + data.len() <= self.size,
+            "Data length is greater than memory area size"
+        );
+        let mut pos = 0;
+        let mut frame_iter = self.private_frames.values_mut().enumerate();
+        for block in BlockIterator::new(MMArch::PAGE_SIZE, offset, data.len()) {
+            let (mut idx, mut frame) = frame_iter.next().unwrap();
+            while idx != block.block_id() {
+                (idx, frame) = frame_iter.next().unwrap();
+            }
+            let frame = frame.as_mut_slice();
+            frame[block.offset()..block.offset() + block.size()]
+                .copy_from_slice(&data[pos..pos + block.size()]);
+            pos += block.size();
+        }
+    }
 }
 
 impl PartialEq for MemoryArea {
@@ -141,18 +182,8 @@ impl PartialEq for MemoryArea {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum MemorySpaceKind {
-    /// 用户页表
-    User,
-    /// 内核页表
-    Kernel,
-}
-
 /// 页表
 pub struct MemorySpace {
-    /// 页表类型
-    kind: MemorySpaceKind,
     /// 根页表
     root_page_table: PhysAddr,
     /// 页表占用的物理页
@@ -178,16 +209,42 @@ impl MemorySpace {
     }
 
     /// 创建内存空间
-    pub fn create(kind: MemorySpaceKind) -> Self {
+    ///
+    /// 自动映射跳板区
+    pub fn create() -> Self {
         let mut memory_space = Self {
-            kind,
             page_table_frames: BTreeMap::new(),
             root_page_table: PhysAddr::new(0),
             areas: BTreeMap::new(),
         };
         let root_page_table = memory_space.create_page_table();
         memory_space.root_page_table = root_page_table;
+        memory_space.map_trampoline();
+
         memory_space
+    }
+
+    /// 映射跳板区域
+    pub fn map_trampoline(&mut self) {
+        unsafe extern "C" {
+            fn strampoline();
+            fn etrampoline();
+        }
+        let strampoline = strampoline as *const () as usize;
+        let etrampoline = etrampoline as *const () as usize;
+        assert!(etrampoline - strampoline == MMArch::TRAMPOLINE_PAGE_COUNT * MMArch::PAGE_SIZE);
+        let start_vaddr = VirtAddr::new(
+            (1 << MMArch::VADDR_BITS_COUNT) - MMArch::TRAMPOLINE_PAGE_COUNT * MMArch::PAGE_SIZE,
+        );
+        for i in 0..MMArch::TRAMPOLINE_PAGE_COUNT {
+            let vaddr = start_vaddr + i * MMArch::PAGE_SIZE;
+            let paddr = PhysAddr::new(strampoline + i * MMArch::PAGE_SIZE);
+            self.map(
+                vaddr,
+                paddr,
+                MemoryPermission::Readable | MemoryPermission::Executable,
+            );
+        }
     }
 
     /// 检查是否和已有 area 重叠
@@ -288,8 +345,7 @@ impl MemorySpace {
                         next_table_paddr,
                         table.level() - 1,
                     );
-                    let next_table_pte =
-                        PTE::new_non_leaf(next_table_paddr, self.kind == MemorySpaceKind::User);
+                    let next_table_pte = PTE::new_non_leaf(next_table_paddr);
                     table.set(index, next_table_pte);
                     table = next_table;
                 }
@@ -336,28 +392,29 @@ impl MemorySpace {
     }
 
     /// 将当前内存空间的虚拟地址翻译成物理地址
-    pub fn translate_vaddr(&self, vaddr: VirtAddr) -> PhysAddr {
+    ///
+    /// # Returns
+    ///
+    /// 如果当前内存空间没有映射该虚拟地址，则返回 None
+    pub fn translate_vaddr(&self, vaddr: VirtAddr) -> Option<PhysAddr> {
         let mut table = unsafe { self.table() };
         loop {
-            let index = table
-                .index_of(vaddr)
-                .expect("Virtual address not in current page table");
+            let index = table.index_of(vaddr)?;
             if table.level() == 0 {
                 let page_offset = vaddr.inner() & (MMArch::PAGE_SIZE - 1);
-                return table.get(index).paddr() + page_offset;
-            } else {
-                table = unsafe {
-                    table
-                        .next_level_table(index)
-                        .expect("Next level table not found")
+                let pte = table.get(index);
+                if !pte.is_valid() {
+                    return None;
                 }
+                return Some(pte.paddr() + page_offset);
+            } else {
+                table = unsafe { table.next_level_table(index)? }
             }
         }
     }
 
     /// 打印当前内存空间的情况
     pub fn print_info(&self, show_page_table_frames: bool) {
-        println!("Kind: {:?}", self.kind);
         println!("Root Page Table: {:?}", self.root_page_table);
         if show_page_table_frames {
             for frame in self.page_table_frames.values() {
@@ -391,5 +448,43 @@ impl MemorySpace {
 
     pub fn activate(&self) {
         MMArch::activate(self);
+    }
+}
+
+impl MemorySpace {
+    pub fn from_elf(elf: &ElfFile) -> Self {
+        let mut memory_space = MemorySpace::create();
+        elf.program_iter()
+            .filter(|ph| ph.get_type().unwrap() == Type::Load)
+            .for_each(|ph| {
+                let mut permission = MemoryPermission::empty();
+                let ph_flags = ph.flags();
+                if ph_flags.is_read() {
+                    permission |= MemoryPermission::Readable;
+                }
+                if ph_flags.is_write() {
+                    permission |= MemoryPermission::Writable;
+                }
+                if ph_flags.is_execute() {
+                    permission |= MemoryPermission::Executable;
+                }
+                permission |= MemoryPermission::UserAccessible;
+                let vaddr = ph.virtual_addr() as usize / MMArch::PAGE_SIZE * MMArch::PAGE_SIZE;
+                let offset = ph.virtual_addr() as usize % MMArch::PAGE_SIZE;
+                let size = offset + ph.mem_size() as usize;
+                let mut area = MemoryArea::new(
+                    VirtAddr::new(vaddr),
+                    size,
+                    permission,
+                    MemoryAreaType::Private,
+                    "elf",
+                );
+                area.write_data(
+                    offset,
+                    &elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize],
+                );
+                memory_space.push(area);
+            });
+        memory_space
     }
 }

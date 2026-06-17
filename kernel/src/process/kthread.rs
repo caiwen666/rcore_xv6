@@ -1,8 +1,6 @@
-use core::cell::UnsafeCell;
-
-use alloc::boxed::Box;
-
 use crate::process::{cpu::CPUManager, schedule::TaskScheduler, task::TaskControlBlock};
+use alloc::boxed::Box;
+use core::cell::UnsafeCell;
 
 pub struct KthreadEntryCell {
     inner: UnsafeCell<Option<Box<dyn FnOnce() -> ! + Send + 'static>>>,
@@ -12,6 +10,12 @@ pub struct KthreadEntryCell {
 unsafe impl Sync for KthreadEntryCell {}
 
 impl KthreadEntryCell {
+    pub fn empty() -> Self {
+        Self {
+            inner: UnsafeCell::new(None),
+        }
+    }
+
     pub fn new<F>(f: F) -> Self
     where
         F: FnOnce() + Send + 'static,
