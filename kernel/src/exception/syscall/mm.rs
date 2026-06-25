@@ -29,12 +29,12 @@ impl MemorySpace {
         for block in BlockIterator::new(MMArch::PAGE_SIZE, from.inner(), to.inner() - from.inner())
         {
             let (_, page_permission) = self.translate_vaddr(vaddr)?;
+            vaddr += block.size();
             let Some(permission) = permission.as_mut() else {
                 permission = Some(page_permission);
                 continue;
             };
             *permission &= page_permission;
-            vaddr += block.size();
         }
 
         permission

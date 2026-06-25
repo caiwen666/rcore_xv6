@@ -11,10 +11,17 @@ fn sys_write(args: [usize; 6]) -> isize {
     let fd: usize = args[0];
     let buf: VirtAddr = VirtAddr::new(args[1]);
     let len: usize = args[2];
+    if len == 0 {
+        return 0;
+    }
     let task = CPUManager::current_task().unwrap();
     let resource = task.process_resource();
     let resource_guard = resource.lock();
-    let Some(file) = resource_guard.fd_table[fd].as_ref().cloned() else {
+    let Some(file) = resource_guard
+        .fd_table
+        .get(fd)
+        .and_then(|f| f.as_ref().cloned())
+    else {
         return -1;
     };
     let memory_space = resource_guard.memory_space.as_ref().unwrap();
