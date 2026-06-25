@@ -11,6 +11,8 @@ use crate::{
 unsafe extern "C" {
     fn stext();
     fn etext();
+    fn ssyscall_table();
+    fn strampoline();
     fn srodata();
     fn erodata();
     fn sdata();
@@ -23,6 +25,8 @@ unsafe extern "C" {
 pub fn init() {
     let stext = stext as *const () as usize;
     let etext = etext as *const () as usize;
+    let ssyscall_table = ssyscall_table as *const () as usize;
+    let strampoline = strampoline as *const () as usize;
     let srodata = srodata as *const () as usize;
     let erodata = erodata as *const () as usize;
     let sdata = sdata as *const () as usize;
@@ -78,12 +82,20 @@ pub fn init() {
     );
     kernel_space.push(text_area);
 
+    let syscall_table_area = MemoryArea::new(
+        VirtAddr::new(ssyscall_table),
+        // esyscall_table 是没有 4k 对齐的，所以映射到 4k 对齐的 strampoline
+        strampoline - ssyscall_table,
+        MemoryPermission::Readable,
+        MemoryAreaType::Identical,
+        "kernel_syscall_table",
+    );
+    kernel_space.push(syscall_table_area);
+
     let rodata_area = MemoryArea::new(
         VirtAddr::new(srodata),
         erodata - srodata,
-        // BOOT_STACK 链接在 .rodata 段内；启动栈必须可写。整段 rodata 映射为 RW
-        //（后续可改为仅映射栈页或把栈挪到 .bss）。
-        MemoryPermission::Readable | MemoryPermission::Writable,
+        MemoryPermission::Readable,
         MemoryAreaType::Identical,
         "kernel_rodata",
     );

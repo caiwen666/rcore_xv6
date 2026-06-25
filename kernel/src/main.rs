@@ -9,7 +9,7 @@
 use crate::{
     arch::{IrqArch, MMArch},
     driver::{VIRTIO0, cpu::ONLINE_CPU_COUNT, enable_plic, init_plic},
-    exception::InterruptArch,
+    exception::{InterruptArch, syscall::init_syscall_table},
     fs::{
         Ext2FileSystem, ROOT_FS,
         file::FileSeekMethod,
@@ -63,6 +63,8 @@ pub extern "C" fn kernel_main() {
         init_plic();
         // 为当前 CPU 启用 PLIC 中断
         enable_plic(cpu.id);
+        // 初始化系统调用
+        init_syscall_table();
         // 启动第一个内核线程，继续完成后续初始化
         spawn_kthread(kthread_main);
         STARTED.store(true, Ordering::Release);

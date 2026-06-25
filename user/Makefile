@@ -14,12 +14,17 @@ CRT_DIR  := lib/crt
 # -fno-pie -fno-pic: 不生成位置无关代码
 # -fno-stack-protector: 不加金丝雀
 # -nostdlib: 不链接标准库
+# -nostdinc: 不使用工具链标准头文件
+# -ffreestanding: 独立环境，不依赖 hosted libc
 # -static: 不链接动态库
 # -Wall -Wextra: 启用所有警告
 CFLAGS  := -march=rv64gc -mabi=lp64 -mcmodel=medany \
            -fno-pie -fno-pic -fno-stack-protector \
-           -nostdlib -static -Wall -Wextra
+           -nostdlib -nostdinc -ffreestanding -static -Wall -Wextra
 LDFLAGS := -T $(CRT_DIR)/linker.ld -nostdlib -static -Wl,--gc-sections
+
+LIB_SRCS := lib/string.c lib/sys/syscall.c lib/sys/file.c
+LIB_OBJS := $(addprefix $(TARGET)/,$(notdir $(LIB_SRCS:.c=.o)))
 
 CRT0_O   := $(TARGET)/crt0.o
 APP_BIN  := $(TARGET)/$(APP)
@@ -29,10 +34,16 @@ APP_O    := $(TARGET)/$(APP).o
 
 all: $(APP_BIN)
 
-$(APP_BIN): $(APP_O) $(CRT0_O) | $(TARGET)
+$(APP_BIN): $(APP_O) $(LIB_OBJS) $(CRT0_O) | $(TARGET)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(TARGET)/%.o: %.c | $(TARGET)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(TARGET)/%.o: lib/%.c | $(TARGET)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(TARGET)/%.o: lib/sys/%.c | $(TARGET)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(CRT0_O): $(CRT_DIR)/crt0.c | $(TARGET)

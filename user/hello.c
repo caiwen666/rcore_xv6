@@ -1,9 +1,9 @@
-#include "lib/syscall.h"
+#include "lib/string.h"
+#include "lib/sys/file.h"
 
 int main(void) {
-  int last = 1;
-  for (int i = 0; i < 5; i++) {
-    last = syscall0(last);
-  }
-  return last / (last - 6);
+  char buf[] = "Hello, World! from user!\n";
+  int len = strlen(buf);
+  write(STDOUT, buf, len);
+  return 0;
 }

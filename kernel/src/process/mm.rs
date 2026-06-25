@@ -3,13 +3,14 @@ use crate::{
     mm::{
         KERNEL_SPACE, MemoryManagementArch,
         address::VirtAddr,
-        mem_space::{MemoryArea, MemoryAreaType, MemoryPermission},
+        mem_space::{MemoryArea, MemoryAreaType, MemoryPermission, MemorySpace},
     },
     process::context::TRAP_CONTEXT_PAGE_COUNT,
     sync::spin::SpinMutex,
     utils::RecycleAllocator,
 };
 use lazy_static::lazy_static;
+use xmas_elf::{ElfFile, program::Type};
 
 /// 内核栈大小，单位为页面
 const KERNEL_STACK_SIZE: usize = 4;
@@ -91,4 +92,42 @@ pub fn ustack_vaddr(tid: usize) -> (VirtAddr, VirtAddr) {
 pub fn trap_context_vaddr(tid: usize) -> VirtAddr {
     let (_, high) = ustack_vaddr(tid);
     high
+}
+
+impl MemorySpace {
+    pub(super) fn from_elf(elf: &ElfFile) -> Self {
+        let mut memory_space = MemorySpace::create();
+        elf.program_iter()
+            .filter(|ph| ph.get_type().unwrap() == Type::Load)
+            .for_each(|ph| {
+                let mut permission = MemoryPermission::empty();
+                let ph_flags = ph.flags();
+                if ph_flags.is_read() {
+                    permission |= MemoryPermission::Readable;
+                }
+                if ph_flags.is_write() {
+                    permission |= MemoryPermission::Writable;
+                }
+                if ph_flags.is_execute() {
+                    permission |= MemoryPermission::Executable;
+                }
+                permission |= MemoryPermission::UserAccessible;
+                let vaddr = ph.virtual_addr() as usize / MMArch::PAGE_SIZE * MMArch::PAGE_SIZE;
+                let offset = ph.virtual_addr() as usize % MMArch::PAGE_SIZE;
+                let size = offset + ph.mem_size() as usize;
+                let mut area = MemoryArea::new(
+                    VirtAddr::new(vaddr),
+                    size,
+                    permission,
+                    MemoryAreaType::Private,
+                    "elf",
+                );
+                area.write_data(
+                    offset,
+                    &elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize],
+                );
+                memory_space.push(area);
+            });
+        memory_space
+    }
 }

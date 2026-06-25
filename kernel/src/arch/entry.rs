@@ -1,6 +1,7 @@
 core::arch::global_asm!(include_str!("entry.S"));
 
 use crate::kernel_main;
+use core::sync::atomic::{AtomicI8, Ordering};
 use riscv::register::{
     Permission as PmpPermission, Range as PmpRange, mcounteren as RiscvMcounteren,
     medeleg as RiscvMedeleg, mepc as RiscvMepc, mhartid as RiscvMhartid, mideleg as RiscvMideleg,
@@ -10,14 +11,25 @@ use riscv::register::{
 
 #[unsafe(no_mangle)]
 extern "C" fn init_cpu() -> ! {
-    // 清空 BSS 段
-    unsafe extern "C" {
-        fn sbss();
-        fn ebss();
+    let hart_id = RiscvMhartid::read();
+
+    // 设置成 -1 可以防止 BSS_READY 本身进了 bss 段
+    static BSS_READY: AtomicI8 = AtomicI8::new(-1);
+    if hart_id == 0 {
+        // 只由 CPU0 来清空 BSS 段
+        unsafe extern "C" {
+            fn sbss();
+            fn ebss();
+        }
+        ((sbss as *const () as usize)..(ebss as *const () as usize)).for_each(|a| unsafe {
+            (a as *mut u8).write_volatile(0);
+        });
+        BSS_READY.store(1, Ordering::Release);
+    } else {
+        while BSS_READY.load(Ordering::Acquire) != 1 {
+            core::hint::spin_loop();
+        }
     }
-    ((sbss as *const () as usize)..(ebss as *const () as usize)).for_each(|a| unsafe {
-        (a as *mut u8).write_volatile(0);
-    });
 
     let mut mstatus = RiscvMStatus::read();
     // 设置 mstatus 的 MPP 为 Supervisor，使得后续进入 Supervisor 模式
@@ -62,7 +74,6 @@ extern "C" fn init_cpu() -> ! {
     unsafe { RiscvMcounteren::write(mcounteren) };
 
     // 将 cpu 的 id 写到 tp 寄存器上
-    let hart_id = RiscvMhartid::read();
     unsafe { super::register::tp::write_tp(hart_id) };
 
     // 初始化 M 模式的陷入处理（时钟中断 + IPI）

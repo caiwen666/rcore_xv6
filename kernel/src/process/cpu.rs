@@ -161,7 +161,8 @@ impl CPUManager {
     /// 调用时需要保证中断关闭
     pub unsafe fn current_cpu() -> &'static mut CPU {
         let cpus = unsafe { &mut *CPU_MANAGER.cpus.get() };
-        &mut cpus[arch::cpu::cpu_id()]
+        // SAFETY: 此时中断已经关闭
+        &mut cpus[unsafe { arch::cpu::cpu_id() }]
     }
 
     /// 获取当前任务
