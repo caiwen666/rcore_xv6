@@ -1,5 +1,5 @@
 use core::fmt::Debug;
-use core::ops::{Add, Sub};
+use core::ops::{Add, AddAssign, Sub};
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
@@ -18,6 +18,11 @@ impl PhysAddr {
     /// 获取对应的不可变引用
     pub fn get<T>(&self) -> &'static T {
         unsafe { (self.0 as *mut T).as_mut().unwrap() }
+    }
+
+    /// 将物理地址转换为指定长度的切片
+    pub fn as_slice(&self, len: usize) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self.0 as *const u8, len) }
     }
 
     /// 检查是否满足对齐要求
@@ -88,6 +93,12 @@ impl Sub<VirtAddr> for VirtAddr {
     type Output = usize;
     fn sub(self, other: Self) -> Self::Output {
         self.0 - other.0
+    }
+}
+
+impl AddAssign<usize> for VirtAddr {
+    fn add_assign(&mut self, other: usize) {
+        self.0 += other;
     }
 }
 

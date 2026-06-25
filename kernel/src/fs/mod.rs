@@ -1,6 +1,7 @@
 mod ext2;
 pub mod file;
 pub mod ramfs;
+mod syscall;
 pub mod vfs;
 
 use crate::{

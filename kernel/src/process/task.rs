@@ -134,7 +134,7 @@ impl TaskControlBlock {
             "trap_context",
         ));
         // 拿到 trap 上下文的物理地址
-        let trap_context_paddr = memory_space
+        let (trap_context_paddr, _) = memory_space
             .translate_vaddr(trap_context_vaddr(id))
             .unwrap();
 

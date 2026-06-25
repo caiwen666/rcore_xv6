@@ -1,12 +1,11 @@
-use core::time::Duration;
 
 use super::RiscV64InterruptArch;
 use crate::{
     arch::register::scause::{Exception, Interrupt},
     driver::plic_handler,
-    exception::{InterruptArch, timer::timer_handler},
+    exception::{InterruptArch, syscall::syscall_table, timer::timer_handler},
     println,
-    process::{cpu::CPUManager, timer::sleep_with_interval},
+    process::cpu::CPUManager,
 };
 use riscv::register::{scause, sepc, sip, sstatus, stval, stvec};
 
@@ -96,20 +95,32 @@ unsafe extern "C" fn user_trap_handler() {
                 let trap_context = current_task.trap_context();
                 trap_context.sepc += 4;
 
+                // a7 存放 syscall id
                 let syscall_id = trap_context.x[17];
-                // 系统调用可能耗时较长，这里开中断
-                RiscV64InterruptArch::enable_interrupt();
+                // a0-a5 存放参数
+                let args = [
+                    trap_context.x[10],
+                    trap_context.x[11],
+                    trap_context.x[12],
+                    trap_context.x[13],
+                    trap_context.x[14],
+                    trap_context.x[15],
+                ];
 
-                // 测试代码
-                println!(
-                    "[syscall begin] pid: {}, tid: {}, syscall_id: {}",
-                    current_task.process().pid,
-                    current_task.id,
-                    syscall_id
-                );
-                sleep_with_interval(Duration::from_secs(1));
-                trap_context.x[10] = syscall_id + 1;
-                println!("[syscall end] result: {}", trap_context.x[10]);
+                if let Some(handle) = syscall_table().get(syscall_id) {
+                    // 系统调用可能耗时较长，这里开中断
+                    RiscV64InterruptArch::enable_interrupt();
+                    let result = (handle.handle)(args);
+                    trap_context.x[10] = result as usize;
+                } else {
+                    println!(
+                        "pid:{}, tid:{}\nsyscall_id:\t{:?}",
+                        current_task.process().pid,
+                        current_task.id,
+                        syscall_id
+                    );
+                    panic!("Unresolved Syscall.")
+                }
             }
             exception => {
                 let reg_sepc = sepc::read();

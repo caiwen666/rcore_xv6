@@ -66,4 +66,21 @@ impl PageTableEntry for Sv39PTE {
         let ppn = (self.bits >> 10) & PPN_MASK;
         PhysAddr::new((ppn as usize) << 12)
     }
+
+    fn permission(&self) -> MemoryPermission {
+        let mut permission = MemoryPermission::empty();
+        if self.flags().contains(Sv39PTEFlags::R) {
+            permission |= MemoryPermission::Readable;
+        }
+        if self.flags().contains(Sv39PTEFlags::W) {
+            permission |= MemoryPermission::Writable;
+        }
+        if self.flags().contains(Sv39PTEFlags::X) {
+            permission |= MemoryPermission::Executable;
+        }
+        if self.flags().contains(Sv39PTEFlags::U) {
+            permission |= MemoryPermission::UserAccessible;
+        }
+        permission
+    }
 }

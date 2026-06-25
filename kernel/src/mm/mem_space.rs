@@ -12,7 +12,6 @@ use crate::{
 use alloc::collections::btree_map::BTreeMap;
 use bitflags::bitflags;
 use core::{fmt::Debug, ops::Bound};
-use xmas_elf::{ElfFile, program::Type};
 
 bitflags! {
     #[derive(Clone, Copy, Eq, PartialEq)]
@@ -396,7 +395,9 @@ impl MemorySpace {
     /// # Returns
     ///
     /// 如果当前内存空间没有映射该虚拟地址，则返回 None
-    pub fn translate_vaddr(&self, vaddr: VirtAddr) -> Option<PhysAddr> {
+    ///
+    /// 否则返回对应的物理地址和权限
+    pub fn translate_vaddr(&self, vaddr: VirtAddr) -> Option<(PhysAddr, MemoryPermission)> {
         let mut table = unsafe { self.table() };
         loop {
             let index = table.index_of(vaddr)?;
@@ -406,7 +407,7 @@ impl MemorySpace {
                 if !pte.is_valid() {
                     return None;
                 }
-                return Some(pte.paddr() + page_offset);
+                return Some((pte.paddr() + page_offset, pte.permission()));
             } else {
                 table = unsafe { table.next_level_table(index)? }
             }
@@ -448,43 +449,5 @@ impl MemorySpace {
 
     pub fn activate(&self) {
         MMArch::activate(self);
-    }
-}
-
-impl MemorySpace {
-    pub fn from_elf(elf: &ElfFile) -> Self {
-        let mut memory_space = MemorySpace::create();
-        elf.program_iter()
-            .filter(|ph| ph.get_type().unwrap() == Type::Load)
-            .for_each(|ph| {
-                let mut permission = MemoryPermission::empty();
-                let ph_flags = ph.flags();
-                if ph_flags.is_read() {
-                    permission |= MemoryPermission::Readable;
-                }
-                if ph_flags.is_write() {
-                    permission |= MemoryPermission::Writable;
-                }
-                if ph_flags.is_execute() {
-                    permission |= MemoryPermission::Executable;
-                }
-                permission |= MemoryPermission::UserAccessible;
-                let vaddr = ph.virtual_addr() as usize / MMArch::PAGE_SIZE * MMArch::PAGE_SIZE;
-                let offset = ph.virtual_addr() as usize % MMArch::PAGE_SIZE;
-                let size = offset + ph.mem_size() as usize;
-                let mut area = MemoryArea::new(
-                    VirtAddr::new(vaddr),
-                    size,
-                    permission,
-                    MemoryAreaType::Private,
-                    "elf",
-                );
-                area.write_data(
-                    offset,
-                    &elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize],
-                );
-                memory_space.push(area);
-            });
-        memory_space
     }
 }

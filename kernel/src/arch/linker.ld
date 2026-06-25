@@ -15,6 +15,13 @@ SECTIONS
 
     . = ALIGN(4K);
     etext = .;
+    ssyscall_table = .;
+    .syscall_table : {
+        *(.syscall_table)
+    }
+    esyscall_table = .;
+
+    . = ALIGN(4K);
     strampoline = .;
     .trampoline : {
         *(.trampoline)

@@ -19,6 +19,8 @@ pub trait PageTableEntry: Clone + Copy + 'static {
     fn is_valid(&self) -> bool;
     /// 获取页表项指向的物理地址
     fn paddr(&self) -> PhysAddr;
+    /// 获取页表项的权限
+    fn permission(&self) -> MemoryPermission;
 }
 
 #[derive(Debug)]

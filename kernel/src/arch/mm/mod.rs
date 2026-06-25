@@ -50,7 +50,8 @@ impl MemoryManagementArch for RiscV64MMArch {
 
     unsafe fn tlb_shootdown() {
         let online_cpu_count = ONLINE_CPU_COUNT.load(Ordering::Relaxed);
-        let me = cpu_id();
+        // SAFETY: 此时中断已经关闭
+        let me = unsafe { cpu_id() };
 
         // 在发起 IPI 之前先把每个目标 CPU 的 ACK 计数读出来
         // 后面发起 IPI 之后，如果目标 CPU 的 ACK 计数发生了改变，就说明目标 CPU 已经完成了一次 TLB shootdown

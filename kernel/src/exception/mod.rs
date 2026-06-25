@@ -1,3 +1,4 @@
+pub mod syscall;
 pub mod timer;
 
 pub trait InterruptArch {

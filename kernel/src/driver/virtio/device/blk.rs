@@ -190,6 +190,7 @@ impl<T: Transport> VirtIOBlk<T> {
                     .lock()
                     .translate_vaddr(VirtAddr::from_ref(&status))
                     .unwrap()
+                    .0
                     .inner() as u64,
                 1,
                 DescFlags::WRITE,

@@ -19,3 +19,4 @@ safe-mmio = "0.3.0"
 slabmalloc = { path = "crates/slabmalloc" }
 xmas-elf = "0.10.0"
 zerocopy = "0.8.48"
+syscall_macros = { path = "crates/syscall_macros" }
