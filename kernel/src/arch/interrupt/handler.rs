@@ -1,4 +1,3 @@
-
 use super::RiscV64InterruptArch;
 use crate::{
     arch::register::scause::{Exception, Interrupt},
