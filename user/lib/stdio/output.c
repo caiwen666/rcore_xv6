@@ -5,18 +5,19 @@
 
 #define uint unsigned int
 #define uint64 unsigned long long
+#define int64 long long
 
 void putchar(int fd, char c) { write(fd, &c, 1); }
 
-static void printint(int fd, int xx, int base, int sgn) {
-  char buf[16];
+static void printint(int fd, int64 xx, int base, int sgn) {
+  char buf[22];
   int i, neg;
-  uint x;
+  uint64 x;
 
   neg = 0;
   if (sgn && xx < 0) {
     neg = 1;
-    x = -xx;
+    x = -(uint64)xx;
   } else {
     x = xx;
   }

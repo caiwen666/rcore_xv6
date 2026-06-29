@@ -16,8 +16,8 @@ struct cmd {
 
 struct execcmd {
   int type;
-  char *argv[MAXARGS];
-  char *eargv[MAXARGS];
+  char *argv[MAXARGS + 1];
+  char *eargv[MAXARGS + 1];
 };
 
 struct redircmd {

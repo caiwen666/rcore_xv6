@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[syscall(name = "SYS_CHDIR", id = 2)]
-fn sys_read(args: [usize; 6]) -> isize {
+fn sys_chdir(args: [usize; 6]) -> isize {
     const MAXPATH: usize = 128;
     let path_addr: VirtAddr = VirtAddr::new(args[0]);
 
@@ -16,6 +16,9 @@ fn sys_read(args: [usize; 6]) -> isize {
     let resource_guard = resource.lock();
     let memory_space = resource_guard.memory_space.as_ref().unwrap();
     let path = memory_space.copyin_str(path_addr, MAXPATH);
+    if path.is_empty() {
+        return -1;
+    }
     if memory_space
         .check_permission(path_addr, path_addr + path.len())
         .is_none_or(|permission| {

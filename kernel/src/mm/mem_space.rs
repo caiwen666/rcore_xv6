@@ -75,7 +75,7 @@ pub struct MemoryArea {
     ///
     /// 需要时刻保持 BTreeMap 里的物理页数量和 size 对应的物理页数量一致，
     /// 并且这里面的物理页也是按物理地址从小到大的顺序和虚拟页映射的
-    private_frames: BTreeMap<PhysAddr, PageFrame>,
+    private_frames: BTreeMap<VirtAddr, PageFrame>,
 }
 
 impl MemoryArea {
@@ -96,7 +96,7 @@ impl MemoryArea {
         self.permission
     }
 
-    pub fn private_frame(&self) -> &BTreeMap<PhysAddr, PageFrame> {
+    pub fn private_frame(&self) -> &BTreeMap<VirtAddr, PageFrame> {
         &self.private_frames
     }
 
@@ -124,10 +124,10 @@ impl MemoryArea {
             MemoryAreaType::Private => {
                 let mut private_frames = BTreeMap::new();
                 // 不需要连续的物理页
-                for _ in 0..count {
+                for i in 0..count {
                     let mut frame = alloc_frame(1).expect("Failed to allocate memory area: OOM");
                     frame.clear();
-                    private_frames.insert(frame.addr(), frame);
+                    private_frames.insert(base_vaddr + i * MMArch::PAGE_SIZE, frame);
                 }
                 Self {
                     name,
@@ -195,10 +195,11 @@ impl MemoryArea {
         let new_count = size.div_ceil(MMArch::PAGE_SIZE);
         let old_count = self.size / MMArch::PAGE_SIZE;
         if new_count > old_count {
-            for _ in 0..(new_count - old_count) {
+            for i in 0..(new_count - old_count) {
                 let mut frame = alloc_frame(1).expect("Failed to allocate memory area: OOM");
                 frame.clear();
-                self.private_frames.insert(frame.addr(), frame);
+                self.private_frames
+                    .insert(self.base_vaddr + self.size + i * MMArch::PAGE_SIZE, frame);
             }
         } else if new_count < old_count {
             for _ in 0..(old_count - new_count) {
@@ -479,10 +480,9 @@ impl MemorySpace {
             let relation = area
                 .private_frame()
                 .iter()
-                .enumerate()
                 .rev()
                 .take((new_size - old_size) / MMArch::PAGE_SIZE)
-                .map(|(i, (paddr, _))| (base_addr + i * MMArch::PAGE_SIZE, *paddr))
+                .map(|(&vaddr, frame)| (vaddr, frame.addr()))
                 .collect::<Vec<_>>();
             let permission = area.permission();
             for (vaddr, paddr) in relation {

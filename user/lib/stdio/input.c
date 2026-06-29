@@ -3,7 +3,7 @@
 #include "../sys/file.h"
 
 int getchar(void) {
-  char c;
+  unsigned char c;
   if (read(STDIN, &c, 1) == 0)
     return EOF;
   return c;

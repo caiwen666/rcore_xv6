@@ -96,18 +96,18 @@ impl MemorySpace {
             return String::new();
         }
         let mut s = String::new();
-        for block in BlockIterator::new(MMArch::PAGE_SIZE, vaddr.inner(), max_len) {
+        'outer: for block in BlockIterator::new(MMArch::PAGE_SIZE, vaddr.inner(), max_len) {
             let Some((paddr, _)) = self.translate_vaddr(vaddr) else {
                 break;
             };
             let slice = paddr.as_slice(block.size());
             for c in slice {
                 if *c == 0 {
-                    break;
+                    break 'outer;
                 }
                 s.push(*c as char);
                 if s.len() == max_len {
-                    break;
+                    break 'outer;
                 }
             }
             vaddr += block.size();
