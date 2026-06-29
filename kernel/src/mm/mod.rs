@@ -2,6 +2,7 @@ pub mod address;
 pub mod allocator;
 pub mod mem_space;
 pub mod page_table;
+mod syscall;
 
 use crate::{
     mm::{address::PhysAddr, mem_space::MemorySpace, page_table::PageTableEntry},

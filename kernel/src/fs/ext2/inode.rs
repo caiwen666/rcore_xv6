@@ -195,13 +195,13 @@ impl interface::IndexNode for Inode {
         }
     }
 
-    fn list(&self) -> Vec<String> {
+    fn list(&self) -> Vec<(String, u64)> {
         let mut list = Vec::new();
         let dir_size = self.layout.size as usize;
         let mut data = vec![0u8; dir_size];
         self.read_at(0, &mut data);
-        read_dir_entries(&data, |_header, name| {
-            list.push(name.to_string());
+        read_dir_entries(&data, |header, name| {
+            list.push((name.to_string(), header.inode as u64));
             true
         });
         list

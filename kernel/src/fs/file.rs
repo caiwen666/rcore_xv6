@@ -26,16 +26,15 @@ pub trait File: Send + Sync {
 impl SpinMutex<ProcessResource> {
     /// 在进程中打开一个文件，返回文件描述符
     pub fn open_file(&self, path: &str) -> Option<u64> {
-        let file: Arc<dyn File>;
-        if path == "stdin" {
-            file = Arc::new(Stdin);
+        let file: Arc<dyn File> = if path == "stdin" {
+            Arc::new(Stdin)
         } else if path == "stdout" {
-            file = Arc::new(Stdout);
+            Arc::new(Stdout)
         } else {
             let cwd = self.cwd();
             let inode = lookup(cwd, path)?;
-            file = Arc::new(VirtualFile::new(inode));
-        }
+            Arc::new(VirtualFile::new(inode))
+        };
         let mut resource = self.lock();
         let fd = resource.avail_fd.alloc();
         if fd >= resource.fd_table.len() {

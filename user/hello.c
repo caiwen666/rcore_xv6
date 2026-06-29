@@ -1,9 +1,7 @@
-#include "lib/string.h"
-#include "lib/sys/file.h"
+#include "lib/stdio.h"
 
 int main(void) {
-  char buf[] = "Hello, World! from user!\n";
-  int len = strlen(buf);
-  write(STDOUT, buf, len);
+  char buf[] = "Hello, World! from user!";
+  printf("%s\n", buf);
   return 0;
 }

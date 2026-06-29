@@ -25,6 +25,12 @@ impl PhysAddr {
         unsafe { core::slice::from_raw_parts(self.0 as *const u8, len) }
     }
 
+    /// 将物理地址转换为指定长度的可变切片
+    #[expect(clippy::mut_from_ref)]
+    pub fn as_slice_mut(&self, len: usize) -> &mut [u8] {
+        unsafe { core::slice::from_raw_parts_mut(self.0 as *mut u8, len) }
+    }
+
     /// 检查是否满足对齐要求
     ///
     /// # Parameters

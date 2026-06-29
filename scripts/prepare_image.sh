@@ -9,6 +9,7 @@ IMAGE_DIR="${IMAGE_DIR:-${ROOT_DIR}/image}"
 COPY_LIST=(
 	"${ROOT_DIR}/kernel/Cargo.lock:Cargo.lock"
 	"${ROOT_DIR}/user/target/hello:hello"
+	"${ROOT_DIR}/user/target/sh:sh"
 )
 
 copy_entry() {
