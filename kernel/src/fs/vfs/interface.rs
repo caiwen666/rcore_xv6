@@ -142,8 +142,11 @@ pub trait IndexNode: Send + Sync {
     /// 列出当前目录下的所有文件名称，VFS 框架保证调用该函数时，当前 inode 的类型一定是目录类型
     ///
     /// **会阻塞**
-    #[expect(unused)]
-    fn list(&self) -> Vec<String>;
+    ///
+    /// # Returns
+    ///
+    /// 返回一个二元组列表，第一个元素是文件名称，第二个元素是文件的 inode 编号
+    fn list(&self) -> Vec<(String, u64)>;
 
     /// 获取 inode 的编号，该编号会影响 VFS 框架对 inode 的缓存
     fn id(&self) -> u64;

@@ -1,5 +1,5 @@
 use crate::fs::vfs::{VirtualFileSystem, VirtualIndexNode, interface::FileType};
-use alloc::sync::Arc;
+use alloc::{string::String, sync::Arc};
 
 impl VirtualIndexNode {
     /// 寻找当前目录下指定名称的文件的 inode，会自动处理挂载点
@@ -40,13 +40,42 @@ impl VirtualIndexNode {
             panic!("current inode is not a directory");
         }
         let fs = self.fs();
-        if let Some(parent_inode_id) = self.inner_locked.lock().inode().parent() {
+        let inode = self.inner_locked.lock().inode();
+        if let Some(parent_inode_id) = inode.parent() {
             Some(fs.get_inode_with_cache(parent_inode_id))
         } else {
-            match fs.self_mountpoints.lock().as_ref().cloned() {
-                None => None,
-                Some(self_mountpoints) => self_mountpoints.parent(),
-            }
+            let mount_parent = fs.self_mountpoints.lock().as_ref().cloned();
+            mount_parent.and_then(|inode| inode.parent())
+        }
+    }
+
+    /// 获取当前目录的名称
+    ///
+    /// # Returns
+    ///
+    /// - 如果当前目录是根目录，则返回 None
+    /// - 如果当前目录被从父目录中删除，则返回 None
+    ///
+    /// # Panics
+    ///
+    /// 如果当前 inode 类型不是目录，则 panic
+    pub fn dir_name(&self) -> Option<String> {
+        assert!(
+            self.metadata().file_type == FileType::Directory,
+            "current inode is not a directory"
+        );
+        let fs = self.fs();
+        let inode = self.inner_locked.lock().inode();
+        if let Some(parent_inode_id) = inode.parent() {
+            let parent_inode = fs.get_inode_with_cache(parent_inode_id);
+            // TODO 需要优化
+            let list = parent_inode.list();
+            list.iter()
+                .find(|(_, id)| *id == self.id)
+                .map(|(name, _)| name.clone())
+        } else {
+            let mount_parent = fs.self_mountpoints.lock().as_ref().cloned();
+            mount_parent.and_then(|inode| inode.dir_name())
         }
     }
 

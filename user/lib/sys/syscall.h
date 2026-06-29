@@ -9,6 +9,10 @@
 #include "../types.h"
 
 #define SYS_WRITE 0
+#define SYS_READ 1
+#define SYS_CHDIR 2
+#define SYS_SBRK 3
+#define SYS_GETCWD 4
 
 isize syscall0(usize id);
 isize syscall1(usize id, usize arg0);

@@ -84,13 +84,16 @@ impl VirtualIndexNode {
         self.inner_locked.lock().inode().metadata()
     }
 
-    /// 列出当前目录下的所有文件名称
+    /// 列出当前目录下的所有文件
+    ///
+    /// # Returns
+    ///
+    /// 返回一个二元组列表，第一个元素是文件名称，第二个元素是文件的 inode 编号
     ///
     /// # Panics
     ///
     /// - 如果当前 inode 的类型不是目录，则 panic
-    #[expect(unused)]
-    pub fn list(&self) -> Vec<String> {
+    pub fn list(&self) -> Vec<(String, u64)> {
         let inode = self.inner_locked.lock().inode();
         if inode.metadata().file_type != FileType::Directory {
             panic!("current inode is not a directory");

@@ -10,8 +10,12 @@ use crate::{
     utils::BlockIterator,
 };
 use alloc::collections::btree_map::BTreeMap;
+use alloc::vec::Vec;
 use bitflags::bitflags;
-use core::{fmt::Debug, ops::Bound};
+use core::{
+    fmt::Debug,
+    ops::Bound::{self},
+};
 
 bitflags! {
     #[derive(Clone, Copy, Eq, PartialEq)]
@@ -172,6 +176,36 @@ impl MemoryArea {
                 .copy_from_slice(&data[pos..pos + block.size()]);
             pos += block.size();
         }
+    }
+
+    /// 重新调整内存区域的大小。如果新的大小大于当前大小，则扩展内存区域，否则收缩
+    ///
+    /// # Parameters
+    ///
+    /// - `size`: 新的内存区域大小，单位为字节，实际调整到的大小会向上对齐到页大小
+    ///
+    /// # Panics
+    ///
+    /// - 如果内存区域类型不为 [MemoryAreaType::Private]，则 panic
+    pub fn resize(&mut self, size: usize) {
+        assert!(
+            self.area_type == MemoryAreaType::Private,
+            "Memory area type is not private"
+        );
+        let new_count = size.div_ceil(MMArch::PAGE_SIZE);
+        let old_count = self.size / MMArch::PAGE_SIZE;
+        if new_count > old_count {
+            for _ in 0..(new_count - old_count) {
+                let mut frame = alloc_frame(1).expect("Failed to allocate memory area: OOM");
+                frame.clear();
+                self.private_frames.insert(frame.addr(), frame);
+            }
+        } else if new_count < old_count {
+            for _ in 0..(old_count - new_count) {
+                let _ = self.private_frames.pop_last();
+            }
+        }
+        self.size = new_count * MMArch::PAGE_SIZE;
     }
 }
 
@@ -388,6 +422,80 @@ impl MemorySpace {
             self.unmap(vaddr);
         }
         self.flush();
+    }
+
+    /// 寻找某个虚拟地址所在的内存区域，如果虚拟地址不属于任何内存区域，则返回 None
+    pub fn find_area(&self, vaddr: VirtAddr) -> Option<&MemoryArea> {
+        self.areas
+            .range(..=vaddr)
+            .next_back()
+            .and_then(|(_, area)| {
+                let base = area.base_vaddr();
+                let end = base + area.size();
+                if vaddr >= base && (vaddr < end || (area.size() == 0 && vaddr == base)) {
+                    Some(area)
+                } else {
+                    None
+                }
+            })
+    }
+
+    /// 调整某个内存区域的大小
+    ///
+    /// # Parameters
+    ///
+    /// - `base_addr`: 内存区域的起始地址
+    /// - `size`: 新的内存区域大小，单位字节，实际调整到的大小会向上对齐到页大小
+    ///
+    /// # Returns
+    ///
+    /// 如果调整成功，则返回 true。
+    ///
+    /// 如果该内存区域后方的剩余空间不足以扩充到 `size`，则返回 false。
+    ///
+    /// # Panics
+    ///
+    /// - 如果不存在内存区域的起始地址为 `base_addr`，则 panic
+    /// - 如果内存区域类型不为 [MemoryAreaType::Private]，则 panic
+    pub fn resize(&mut self, base_addr: VirtAddr, size: usize) -> bool {
+        let upper_bound = self
+            .areas
+            .range((Bound::Excluded(base_addr), Bound::Unbounded))
+            .next()
+            .map(|(vaddr, _)| vaddr.inner())
+            .unwrap_or(1 << MMArch::VADDR_BITS_COUNT);
+        if upper_bound - base_addr.inner() < size {
+            return false;
+        }
+
+        let area = self
+            .areas
+            .get_mut(&base_addr)
+            .expect("No area found at base_addr");
+        let old_size = area.size();
+        area.resize(size);
+        let new_size = area.size();
+        if old_size < new_size {
+            let relation = area
+                .private_frame()
+                .iter()
+                .enumerate()
+                .rev()
+                .take((new_size - old_size) / MMArch::PAGE_SIZE)
+                .map(|(i, (paddr, _))| (base_addr + i * MMArch::PAGE_SIZE, *paddr))
+                .collect::<Vec<_>>();
+            let permission = area.permission();
+            for (vaddr, paddr) in relation {
+                self.map(vaddr, paddr, permission);
+            }
+        } else if old_size > new_size {
+            for i in 0..(old_size - new_size) / MMArch::PAGE_SIZE {
+                let vaddr = base_addr + new_size + i * MMArch::PAGE_SIZE;
+                self.unmap(vaddr);
+            }
+        }
+        self.flush();
+        true
     }
 
     /// 将当前内存空间的虚拟地址翻译成物理地址

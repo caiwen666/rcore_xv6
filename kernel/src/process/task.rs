@@ -12,7 +12,9 @@ use crate::{
             ArchTaskContext, ArchTrapContext, TRAP_CONTEXT_PAGE_COUNT, TaskContext, TrapContext,
         },
         kthread::KthreadEntryCell,
-        mm::{KernelStack, KernelStackAllocator, trap_context_vaddr, ustack_vaddr},
+        mm::{
+            KernelStack, KernelStackAllocator, USER_HEAP_START, trap_context_vaddr, ustack_vaddr,
+        },
     },
     sync::spin::{SpinMutex, SpinMutexGuard},
 };
@@ -132,6 +134,16 @@ impl TaskControlBlock {
             MemoryPermission::Readable | MemoryPermission::Writable,
             MemoryAreaType::Private,
             "trap_context",
+        ));
+        // 分配堆
+        memory_space.push(MemoryArea::new(
+            VirtAddr::new(USER_HEAP_START),
+            0,
+            MemoryPermission::Readable
+                | MemoryPermission::Writable
+                | MemoryPermission::UserAccessible,
+            MemoryAreaType::Private,
+            "heap",
         ));
         // 拿到 trap 上下文的物理地址
         let (trap_context_paddr, _) = memory_space

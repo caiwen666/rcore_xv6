@@ -180,13 +180,13 @@ impl IndexNode for RamFSInode {
         }
     }
 
-    fn list(&self) -> Vec<String> {
+    fn list(&self) -> Vec<(String, u64)> {
         let inner = self.inner.lock();
         let RamFSInodeType::Directory(ref map) = *inner else {
             // VFS 框架已经保证不可能出现这种情况
             unreachable!();
         };
-        map.keys().cloned().collect()
+        map.iter().map(|(name, id)| (name.clone(), *id)).collect()
     }
 
     fn resize(&self, _new_size: usize) {

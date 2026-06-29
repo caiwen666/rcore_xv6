@@ -16,6 +16,8 @@ use xmas_elf::{ElfFile, program::Type};
 const KERNEL_STACK_SIZE: usize = 4;
 /// 用户栈大小，单位为页面
 const USER_STACK_SIZE: usize = 4;
+/// 用户堆起始地址
+pub const USER_HEAP_START: usize = 1 << (MMArch::VADDR_BITS_COUNT - 1);
 
 pub struct KernelStack {
     id: usize,

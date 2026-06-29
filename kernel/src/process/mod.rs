@@ -66,6 +66,7 @@ impl ProcessManager {
                 cwd: None,
                 fd_table: Vec::new(),
                 avail_fd: RecycleAllocator::new(),
+                heap_size: 0,
             },
             "kernel_process_resource",
         ))
@@ -116,6 +117,7 @@ impl ProcessManager {
                 cwd: Some(cwd),
                 fd_table: Vec::new(),
                 avail_fd: RecycleAllocator::new(),
+                heap_size: 0,
             },
             "process_resource",
         ));
@@ -181,6 +183,9 @@ pub struct ProcessResource {
     pub cwd: Option<VirtualIndexNode>,
     pub fd_table: Vec<Option<Arc<dyn File>>>,
     pub avail_fd: RecycleAllocator,
+    // heap 在内存空间对应的区域的大小是经过对齐的，这里记录一下对齐前的真实大小，确保
+    // sbrk 返回的地址是对的
+    pub heap_size: isize,
 }
 
 impl SpinMutex<ProcessResource> {
