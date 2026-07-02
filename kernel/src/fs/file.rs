@@ -2,6 +2,7 @@ use alloc::sync::Arc;
 
 use crate::{
     console::{Stdin, Stdout},
+    error::SystemError,
     fs::vfs::{VirtualFile, lookup},
     process::ProcessResource,
     sync::spin::SpinMutex,
@@ -15,12 +16,9 @@ pub enum FileSeekMethod {
 }
 
 pub trait File: Send + Sync {
-    /// 如果不支持读取则返回 None
-    fn read(&self, buf: &mut [u8]) -> Option<usize>;
-    /// 如果不支持写入则返回 None
-    fn write(&self, buf: &[u8]) -> Option<usize>;
-    /// 移动文件指针，返回新的文件指针位置，如果不能移动则返回 None
-    fn seek(&self, method: FileSeekMethod) -> Option<usize>;
+    fn read(&self, buf: &mut [u8]) -> Result<usize, SystemError>;
+    fn write(&self, buf: &[u8]) -> Result<usize, SystemError>;
+    fn seek(&self, method: FileSeekMethod) -> Result<usize, SystemError>;
 }
 
 impl SpinMutex<ProcessResource> {

@@ -2,13 +2,18 @@ use alloc::{string::String, vec::Vec};
 use syscall_macros::syscall;
 
 use crate::{
+    error::SystemError,
     mm::{address::VirtAddr, mem_space::MemoryPermission},
     process::cpu::CPUManager,
 };
 
 #[syscall(name = "SYS_GETCWD", id = 4)]
-fn sys_getcwd(args: [usize; 6]) -> isize {
+fn sys_getcwd(args: [usize; 6]) -> Result<usize, SystemError> {
     let path_addr = VirtAddr::new(args[0]);
+    let max_len = args[1];
+    if max_len == 0 {
+        return Err(SystemError::EINVAL);
+    }
 
     let task = CPUManager::current_task().unwrap();
     let resource = task.process_resource();
@@ -23,29 +28,26 @@ fn sys_getcwd(args: [usize; 6]) -> isize {
 
     let mut path = String::new();
     for inode in path_inode.into_iter().rev().skip(1) {
-        let Some(dir_name) = inode.dir_name() else {
-            return -1;
-        };
+        let dir_name = inode.dir_name().ok_or(SystemError::ENOENT)?;
         path.push('/');
         path.push_str(dir_name.as_str());
     }
     if path.is_empty() {
         path.push('/');
     }
+    if path.len() >= max_len {
+        return Err(SystemError::ERANGE);
+    }
 
     let resource_guard = resource.lock();
     let memory_space = resource_guard.memory_space.as_ref().unwrap();
-    let Some(permission) = memory_space.check_permission(path_addr, path_addr + path.len() + 1)
-    else {
-        return -1;
-    };
+    let permission = memory_space.check_permission(path_addr, path_addr + path.len() + 1)?;
     if !permission.contains(MemoryPermission::UserAccessible)
         || !permission.contains(MemoryPermission::Writable)
     {
-        return -1;
+        return Err(SystemError::EFAULT);
     }
-    let len = path.len();
     memory_space.copyout_str(path_addr, path);
 
-    len as isize
+    Ok(args[0])
 }

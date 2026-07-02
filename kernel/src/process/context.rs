@@ -27,6 +27,8 @@ pub trait TrapContext: Clone {
     fn pc(&self) -> VirtAddr;
     /// 设置用户栈地址
     fn set_ustack(self, ustack: VirtAddr) -> Self;
+    /// 设置 tls 基址
+    fn set_tls_base(self, tls_base: VirtAddr) -> Self;
 }
 
 pub type ArchTrapContext = <IrqArch as InterruptArch>::TrapContext;

@@ -9,7 +9,7 @@ use crate::{
     },
     exception::{InterruptArch, timer::TIMER_INTERVAL},
     mm::{MemoryManagementArch, address::VirtAddr},
-    process::{cpu::CPUManager, mm::trap_context_vaddr},
+    process::cpu::CPUManager,
 };
 use core::sync::atomic::AtomicUsize;
 use riscv::register::{mie, mscratch, mstatus, mtvec, satp::Satp, sstatus, stvec};
@@ -101,7 +101,12 @@ impl InterruptArch for RiscV64InterruptArch {
         );
         unsafe { stvec::write(reg_stvec) };
 
-        let trap_vaddr = trap_context_vaddr(cpu.current_task.as_ref().unwrap().id);
+        let trap_vaddr;
+        {
+            let current_task = cpu.current_task.as_ref().unwrap();
+            let process = current_task.process();
+            trap_vaddr = process.trap_context_vaddr(current_task.id);
+        }
         f(trap_vaddr, satp)
     }
 }

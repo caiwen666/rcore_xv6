@@ -148,4 +148,12 @@ int strlen(const char *s);
  */
 char *strchr(const char *s, char c);
 
+/**
+ * @brief 返回错误码对应的描述字符串
+ *
+ * @param errnum POSIX errno 值
+ * @return 指向静态错误描述字符串的指针
+ */
+char *strerror(int errnum);
+
 #endif

@@ -6,6 +6,7 @@
 #define RCORE_XV6_STDLIB_H
 
 #include "types.h"
+#include "errno.h"
 
 #define NULL 0
 #define true 1

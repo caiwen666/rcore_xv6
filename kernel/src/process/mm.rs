@@ -5,7 +5,7 @@ use crate::{
         address::VirtAddr,
         mem_space::{MemoryArea, MemoryAreaType, MemoryPermission, MemorySpace},
     },
-    process::context::TRAP_CONTEXT_PAGE_COUNT,
+    process::{ProcessControlBlock, context::TRAP_CONTEXT_PAGE_COUNT},
     sync::spin::SpinMutex,
     utils::RecycleAllocator,
 };
@@ -69,31 +69,44 @@ impl KernelStackAllocator {
     }
 }
 
-/// 根据 tid 计算线程用户栈地址的 trap 上下文地址
-///
-/// # Returns
-///
-/// 返回二元组为 (l, r)，表示在用户栈在 [l, r) 这个地址区间上
-pub fn ustack_vaddr(tid: usize) -> (VirtAddr, VirtAddr) {
-    let all_top =
-        (1 << MMArch::VADDR_BITS_COUNT) - MMArch::TRAMPOLINE_PAGE_COUNT * MMArch::PAGE_SIZE;
-    // 从 all_top 开始，每个进程都占了三个部分，从高地址往低地址依次是：
-    // trap 上下文 -> 用户栈 -> 空白页
-    let part_high =
-        all_top - tid * (TRAP_CONTEXT_PAGE_COUNT + USER_STACK_SIZE + 1) * MMArch::PAGE_SIZE;
-    let high = part_high - TRAP_CONTEXT_PAGE_COUNT * MMArch::PAGE_SIZE;
-    let low = high - USER_STACK_SIZE * MMArch::PAGE_SIZE;
-    (VirtAddr::new(low), VirtAddr::new(high))
-}
+impl ProcessControlBlock {
+    /// 根据 tid 计算线程用户栈地址的 trap 上下文地址
+    ///
+    /// # Returns
+    ///
+    /// 返回二元组为 (l, r)，表示在用户栈在 [l, r) 这个地址区间上
+    pub fn ustack_vaddr(&self, tid: usize) -> (VirtAddr, VirtAddr) {
+        let all_top =
+            (1 << MMArch::VADDR_BITS_COUNT) - MMArch::TRAMPOLINE_PAGE_COUNT * MMArch::PAGE_SIZE;
+        // 从 all_top 开始，每个进程都占了三个部分，从高地址往低地址依次是：
+        // trap 上下文 -> 用户栈 -> 空白页 -> tls
+        let part_size = (TRAP_CONTEXT_PAGE_COUNT + USER_STACK_SIZE + 1) * MMArch::PAGE_SIZE
+            + self.tls_size.unwrap_or(0);
+        let part_high = all_top - tid * part_size;
+        let high = part_high - TRAP_CONTEXT_PAGE_COUNT * MMArch::PAGE_SIZE;
+        let low = high - USER_STACK_SIZE * MMArch::PAGE_SIZE;
+        (VirtAddr::new(low), VirtAddr::new(high))
+    }
 
-/// 根据 tid 计算线程的 trap 上下文地址
-///
-/// # Returns
-///
-/// 返回 trap 上下文的起始地址
-pub fn trap_context_vaddr(tid: usize) -> VirtAddr {
-    let (_, high) = ustack_vaddr(tid);
-    high
+    /// 根据 tid 计算线程的 trap 上下文地址
+    ///
+    /// # Returns
+    ///
+    /// 返回 trap 上下文的起始地址
+    pub fn trap_context_vaddr(&self, tid: usize) -> VirtAddr {
+        let (_, high) = self.ustack_vaddr(tid);
+        high
+    }
+
+    /// 根据 tid 计算线程的 tls 区域的起始地址
+    ///
+    /// # Returns
+    ///
+    /// 如果没有 tls 区域则返回 None
+    pub fn tls_vaddr(&self, tid: usize) -> Option<VirtAddr> {
+        let (low, _) = self.ustack_vaddr(tid);
+        Some(low - MMArch::PAGE_SIZE - self.tls_size?)
+    }
 }
 
 impl MemorySpace {

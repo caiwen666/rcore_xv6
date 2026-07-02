@@ -12,9 +12,7 @@ use crate::{
             ArchTaskContext, ArchTrapContext, TRAP_CONTEXT_PAGE_COUNT, TaskContext, TrapContext,
         },
         kthread::KthreadEntryCell,
-        mm::{
-            KernelStack, KernelStackAllocator, USER_HEAP_START, trap_context_vaddr, ustack_vaddr,
-        },
+        mm::{KernelStack, KernelStackAllocator, USER_HEAP_START},
     },
     sync::spin::{SpinMutex, SpinMutexGuard},
 };
@@ -115,7 +113,7 @@ impl TaskControlBlock {
         let mut resource = process_resource.lock();
         let id = resource.avail_task_id.alloc();
         // 分配用户栈
-        let (ustack_low, ustack_high) = ustack_vaddr(id);
+        let (ustack_low, ustack_high) = process.ustack_vaddr(id);
         let memory_space = resource.memory_space.as_mut().unwrap();
         memory_space.push(MemoryArea::new(
             ustack_low,
@@ -128,7 +126,7 @@ impl TaskControlBlock {
         ));
         // 分配 trap 上下文
         memory_space.push(MemoryArea::new(
-            trap_context_vaddr(id),
+            process.trap_context_vaddr(id),
             TRAP_CONTEXT_PAGE_COUNT * MMArch::PAGE_SIZE,
             // 不给 U 权限
             MemoryPermission::Readable | MemoryPermission::Writable,
@@ -145,9 +143,23 @@ impl TaskControlBlock {
             MemoryAreaType::Private,
             "heap",
         ));
+        // 分配 tls
+        let mut tls_base = VirtAddr::new(0);
+        if let Some(tls_size) = process.tls_size {
+            tls_base = process.tls_vaddr(id).unwrap();
+            memory_space.push(MemoryArea::new(
+                tls_base,
+                tls_size,
+                MemoryPermission::Readable
+                    | MemoryPermission::Writable
+                    | MemoryPermission::UserAccessible,
+                MemoryAreaType::Private,
+                "tls",
+            ));
+        }
         // 拿到 trap 上下文的物理地址
         let (trap_context_paddr, _) = memory_space
-            .translate_vaddr(trap_context_vaddr(id))
+            .translate_vaddr(process.trap_context_vaddr(id))
             .unwrap();
 
         let task = Arc::new(Self {
@@ -169,7 +181,8 @@ impl TaskControlBlock {
         // 写入 trap 上下文
         *task.trap_context() = ArchTrapContext::new(kstack_high)
             .set_ustack(ustack_high)
-            .set_pc(entry);
+            .set_pc(entry)
+            .set_tls_base(tls_base);
 
         if id >= resource.tasks.len() {
             resource.tasks.push(Some(Arc::downgrade(&task)));

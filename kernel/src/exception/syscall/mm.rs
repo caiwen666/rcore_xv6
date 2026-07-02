@@ -2,6 +2,7 @@ use alloc::string::String;
 
 use crate::{
     arch::MMArch,
+    error::SystemError,
     mm::{
         MemoryManagementArch,
         address::VirtAddr,
@@ -17,7 +18,15 @@ impl MemorySpace {
     /// # Panics
     ///
     /// 如果 `from` 大于等于 `to`，则 panic
-    pub fn check_permission(&self, from: VirtAddr, to: VirtAddr) -> Option<MemoryPermission> {
+    ///
+    /// # Errors
+    ///
+    /// - [SystemError::EFAULT] 如果区间内存在未映射的内存区域，则抛出该错误
+    pub fn check_permission(
+        &self,
+        from: VirtAddr,
+        to: VirtAddr,
+    ) -> Result<MemoryPermission, SystemError> {
         assert!(
             from < to,
             "from must be less than to, got from = {:?}, to = {:?}",
@@ -30,7 +39,7 @@ impl MemorySpace {
 
         for block in BlockIterator::new(MMArch::PAGE_SIZE, from.inner(), to.inner() - from.inner())
         {
-            let (_, page_permission) = self.translate_vaddr(vaddr)?;
+            let (_, page_permission) = self.translate_vaddr(vaddr).ok_or(SystemError::EFAULT)?;
             vaddr += block.size();
             let Some(permission) = permission.as_mut() else {
                 permission = Some(page_permission);
@@ -39,7 +48,7 @@ impl MemorySpace {
             *permission &= page_permission;
         }
 
-        permission
+        Ok(permission.unwrap())
     }
 
     /// 将内存空间中虚拟地址为 `vaddr` 处开始的数据拷贝到 `buf` 中
@@ -88,17 +97,20 @@ impl MemorySpace {
 
     /// 将内存空间中虚拟地址为 `vaddr` 处开始的字符串拷贝出来
     ///
-    /// # Returns
+    /// # Panics
     ///
-    /// 当遇到 `\0` 字符，或是长度达到 `max_len`，或是遇到了未被映射的内存区域，则返回
-    pub fn copyin_str(&self, mut vaddr: VirtAddr, max_len: usize) -> String {
-        if max_len == 0 {
-            return String::new();
-        }
+    /// - 如果 `max_len` 为 0，则 panic
+    ///
+    /// # Errors
+    ///
+    /// - [SystemError::ENAMETOOLONG] 如果字符串长度超过 `max_len` 仍未遇到 `\0` 字符，则抛出该错误
+    /// - [SystemError::EFAULT] 如果拷贝过程中遇到了未映射的内存区域，则抛出该错误
+    pub fn copyin_str(&self, mut vaddr: VirtAddr, max_len: usize) -> Result<String, SystemError> {
+        assert!(max_len > 0, "max_len must be greater than 0");
         let mut s = String::new();
         'outer: for block in BlockIterator::new(MMArch::PAGE_SIZE, vaddr.inner(), max_len) {
             let Some((paddr, _)) = self.translate_vaddr(vaddr) else {
-                break;
+                return Err(SystemError::EFAULT);
             };
             let slice = paddr.as_slice(block.size());
             for c in slice {
@@ -107,12 +119,12 @@ impl MemorySpace {
                 }
                 s.push(*c as char);
                 if s.len() == max_len {
-                    break 'outer;
+                    return Err(SystemError::ENAMETOOLONG);
                 }
             }
             vaddr += block.size();
         }
-        s
+        Ok(s)
     }
 
     /// 将字符串拷贝到内存空间中虚拟地址为 `vaddr` 处开始的位置
