@@ -7,7 +7,7 @@ use crate::{
         address::VirtAddr,
         mem_space::{MemoryPermission, MemorySpace},
     },
-    process::cpu::CPUManager,
+    process::ProcessManager,
 };
 
 #[syscall(name = "SYS_READ", id = 1)]
@@ -18,7 +18,7 @@ fn sys_read(args: [usize; 6]) -> Result<usize, SystemError> {
     if len == 0 {
         return Ok(0);
     }
-    let task = CPUManager::current_task().unwrap();
+    let task = ProcessManager::current_task();
     let resource = task.process_resource();
     let resource_guard = resource.lock();
     let file = resource_guard

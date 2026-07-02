@@ -9,7 +9,8 @@ pub mod timer;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
-    arch::MMArch,
+    arch::{IrqArch, MMArch},
+    exception::InterruptArch,
     fs::{
         ROOT_FS,
         file::File,
@@ -76,17 +77,57 @@ impl ProcessManager {
 }
 
 impl ProcessManager {
+    /// 获取当前任务
+    ///
+    /// # Panics
+    ///
+    /// - 如果当前没有任务，则 panic
+    pub fn current_task() -> Arc<TaskControlBlock> {
+        let interrupted = IrqArch::get_interrupt_state();
+        IrqArch::disable_interrupt();
+        let cpu = unsafe { CPUManager::current_cpu() };
+        cpu.spinning_state.push_lock(interrupted);
+        let task = cpu.current_task.clone().unwrap();
+        if cpu.spinning_state.pop_lock() {
+            IrqArch::enable_interrupt();
+        }
+        task
+    }
+
     /// 获取当前进程
     #[expect(unused)]
-    pub fn current() -> Arc<ProcessControlBlock> {
-        let task = CPUManager::current_task().unwrap();
+    pub fn current_process() -> Arc<ProcessControlBlock> {
+        let task = Self::current_task();
         task.process().clone()
     }
 
     /// 获取当前进程资源
     pub fn current_resource() -> Arc<SpinMutex<ProcessResource>> {
-        let task = CPUManager::current_task().unwrap();
+        let task = Self::current_task();
         task.process_resource().clone()
+    }
+
+    /// 退出当前任务
+    ///
+    /// # Preconditions
+    ///
+    /// - 调用前应确保应该 drop 掉的东西全都 drop 了，否则会出现资源泄露
+    pub fn exit_current_task() -> ! {
+        let task = Self::current_task();
+        let mut task_inner = task.lock();
+        // SAFETY: 当前正在对 task_inner 加锁，所以中断还是关闭的
+        let cpu = unsafe { CPUManager::current_cpu() };
+        let current_context = &mut task_inner.task_context as *mut _;
+        // 下面行为的原因见 CPUManager::yield_current_task 的注释
+        // SAFETY: 调度循环会进行解锁
+        unsafe { task_inner.leak() };
+        drop(task_inner);
+        drop(task);
+        // 直接返回调度循环，由于我们没有把当前的任务放到调度队列里，因此该任务不会被再次调度了
+        // 理论上当前 task 仅剩挂在 CPU 上的引用，回到调度循环后这唯一的引用也没了，于是整个
+        // 任务会被释放掉
+        cpu.go_scheduler(current_context);
+        unreachable!()
     }
 }
 

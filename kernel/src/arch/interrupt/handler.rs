@@ -4,7 +4,7 @@ use crate::{
     driver::plic_handler,
     exception::{InterruptArch, syscall::syscall_table, timer::timer_handler},
     println,
-    process::cpu::CPUManager,
+    process::ProcessManager,
 };
 use riscv::register::{scause, sepc, sip, sstatus, stval, stvec};
 
@@ -86,7 +86,7 @@ unsafe extern "C" fn user_trap_handler() {
     unsafe { stvec::write(reg_stvec) };
 
     let reg_scause = scause::read();
-    let current_task = CPUManager::current_task().unwrap();
+    let current_task = ProcessManager::current_task();
     match reg_scause.cause() {
         scause::Trap::Exception(code) => match Exception::from(code) {
             // 系统调用

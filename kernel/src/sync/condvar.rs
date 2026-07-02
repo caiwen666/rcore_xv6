@@ -1,5 +1,6 @@
 use crate::{
     process::{
+        ProcessManager,
         cpu::CPUManager,
         schedule::TaskScheduler,
         task::{TaskControlBlock, TaskStatus},
@@ -26,7 +27,7 @@ impl Condvar {
     /// 调用者需要保证调用时只持有 guard 对应的自旋锁，否则持有的其他锁可能会死锁，
     /// 如果调用者未满足该条件，则 panic
     pub fn wait<'a, T>(&self, guard: SpinMutexGuard<'a, T>) -> SpinMutexGuard<'a, T> {
-        let current_task = CPUManager::current_task().unwrap();
+        let current_task = ProcessManager::current_task();
 
         let mut queue = self.queue.lock();
         // 已经给 queue 加上锁了，所以可以直接释放 guard

@@ -3,6 +3,7 @@ use core::{cmp::Ordering, time::Duration};
 use crate::{
     exception::timer::{TIMER_INTERVAL, jiffies},
     process::{
+        ProcessManager,
         cpu::CPUManager,
         schedule::TaskScheduler,
         task::{TaskControlBlock, TaskStatus},
@@ -57,7 +58,7 @@ pub fn sleep_with_expire(expire_us: usize) {
     // 没用 condvar 来做睡眠和唤醒
     // 用 condvar 的话需要取 condvar 加入堆之后的引用来睡眠
     // 而 BinaryHeap 不支持插入元素后返回元素在堆中引用
-    let current_task = CPUManager::current_task().unwrap();
+    let current_task = ProcessManager::current_task();
     let sleep_timer = SleepTimer {
         expire_us,
         task: current_task.clone(),

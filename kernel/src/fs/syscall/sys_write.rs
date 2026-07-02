@@ -4,7 +4,7 @@ use syscall_macros::syscall;
 use crate::{
     error::SystemError,
     mm::{address::VirtAddr, mem_space::MemoryPermission},
-    process::cpu::CPUManager,
+    process::ProcessManager,
 };
 
 #[syscall(name = "SYS_WRITE", id = 0)]
@@ -15,7 +15,7 @@ fn sys_write(args: [usize; 6]) -> Result<usize, SystemError> {
     if len == 0 {
         return Ok(0);
     }
-    let task = CPUManager::current_task().unwrap();
+    let task = ProcessManager::current_task();
     let resource = task.process_resource();
     let resource_guard = resource.lock();
     let file = resource_guard

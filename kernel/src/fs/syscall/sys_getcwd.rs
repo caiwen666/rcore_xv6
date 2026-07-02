@@ -4,7 +4,7 @@ use syscall_macros::syscall;
 use crate::{
     error::SystemError,
     mm::{address::VirtAddr, mem_space::MemoryPermission},
-    process::cpu::CPUManager,
+    process::ProcessManager,
 };
 
 #[syscall(name = "SYS_GETCWD", id = 4)]
@@ -15,7 +15,7 @@ fn sys_getcwd(args: [usize; 6]) -> Result<usize, SystemError> {
         return Err(SystemError::EINVAL);
     }
 
-    let task = CPUManager::current_task().unwrap();
+    let task = ProcessManager::current_task();
     let resource = task.process_resource();
 
     let mut inode = resource.cwd();
