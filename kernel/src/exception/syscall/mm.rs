@@ -48,7 +48,7 @@ impl MemorySpace {
             *permission &= page_permission;
         }
 
-        Ok(permission.unwrap_or(MemoryPermission::empty()))
+        Ok(permission.unwrap())
     }
 
     /// 将内存空间中虚拟地址为 `vaddr` 处开始的数据拷贝到 `buf` 中
