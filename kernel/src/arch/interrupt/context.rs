@@ -78,4 +78,9 @@ impl crate::process::context::TrapContext for TrapContext {
         self.x[2] = ustack.inner();
         self
     }
+
+    fn set_tls_base(mut self, tls_base: VirtAddr) -> Self {
+        self.x[4] = tls_base.inner();
+        self
+    }
 }

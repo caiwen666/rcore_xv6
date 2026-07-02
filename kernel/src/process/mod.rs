@@ -9,12 +9,13 @@ pub mod timer;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
+    arch::MMArch,
     fs::{
         ROOT_FS,
         file::File,
         vfs::{VirtualIndexNode, lookup},
     },
-    mm::{address::VirtAddr, mem_space::MemorySpace},
+    mm::{MemoryManagementArch, address::VirtAddr, mem_space::MemorySpace},
     process::{cpu::CPUManager, schedule::TaskScheduler, task::TaskControlBlock},
     sync::spin::{SpinMutex, SpinMutexGuard},
     utils::RecycleAllocator,
@@ -24,7 +25,7 @@ use alloc::{
     vec::Vec,
 };
 use lazy_static::lazy_static;
-use xmas_elf::ElfFile;
+use xmas_elf::{ElfFile, program::Type};
 
 lazy_static! {
     static ref KERNEL_PROCESS: Arc<ProcessControlBlock> = ProcessManager::init_kernel_process();
@@ -47,6 +48,7 @@ impl ProcessManager {
         Arc::new(ProcessControlBlock {
             // 内核进程的 pid 固定为 0
             pid: 0,
+            tls_size: None,
             inner: SpinMutex::new(
                 ProcessControlBlockInner {
                     status: ProcessStatus::Running,
@@ -98,8 +100,16 @@ impl ProcessManager {
         let elf =
             ElfFile::new(elf_data).unwrap_or_else(|e| panic!("Failed to parse elf file: {}", e));
         let memory_space = MemorySpace::from_elf(&elf);
+
+        // 解析 tls
+        let tls_size = elf
+            .program_iter()
+            .find(|ph| ph.get_type().unwrap() == Type::Tls)
+            .map(|ph| (ph.mem_size() as usize).div_ceil(MMArch::PAGE_SIZE) * MMArch::PAGE_SIZE);
+
         let process = Arc::new(ProcessControlBlock {
             pid: PID_ALLOCATOR.fetch_add(1, Ordering::Relaxed),
+            tls_size,
             inner: SpinMutex::new(
                 ProcessControlBlockInner {
                     status: ProcessStatus::Running,
@@ -144,6 +154,8 @@ impl ProcessManager {
 /// 当进程结束时，PCB 仍存在引用计数，不会被释放，直到父进程将其回收
 pub struct ProcessControlBlock {
     pub pid: usize,
+    /// 进程需要的 tls 区域的大小，按页大小对齐
+    pub tls_size: Option<usize>,
     inner: SpinMutex<ProcessControlBlockInner>,
 }
 

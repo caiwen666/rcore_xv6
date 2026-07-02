@@ -102,6 +102,13 @@ impl Sub<VirtAddr> for VirtAddr {
     }
 }
 
+impl Sub<usize> for VirtAddr {
+    type Output = Self;
+    fn sub(self, other: usize) -> Self::Output {
+        Self(self.0 - other)
+    }
+}
+
 impl AddAssign<usize> for VirtAddr {
     fn add_assign(&mut self, other: usize) {
         self.0 += other;
