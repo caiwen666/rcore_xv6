@@ -1,10 +1,12 @@
+use crate::error::SystemError;
+
 pub mod mm;
 
 pub struct SyscallHandle {
     pub id: usize,
     #[expect(unused)]
     pub name: &'static str,
-    pub handle: fn([usize; 6]) -> isize,
+    pub handle: fn([usize; 6]) -> Result<usize, SystemError>,
 }
 
 pub struct SyscallTable {

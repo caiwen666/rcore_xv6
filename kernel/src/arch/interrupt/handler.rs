@@ -109,8 +109,20 @@ unsafe extern "C" fn user_trap_handler() {
                 if let Some(handle) = syscall_table().get(syscall_id) {
                     // 系统调用可能耗时较长，这里开中断
                     RiscV64InterruptArch::enable_interrupt();
-                    let result = (handle.handle)(args);
-                    trap_context.x[10] = result as usize;
+                    match (handle.handle)(args) {
+                        Ok(result) => {
+                            if result > isize::MAX as usize {
+                                panic!(
+                                    "Syscall result too large, syscall id: {}, result: {}",
+                                    syscall_id, result
+                                );
+                            }
+                            trap_context.x[10] = result;
+                        }
+                        Err(error) => {
+                            trap_context.x[10] = error.posix_errno() as usize;
+                        }
+                    }
                 } else {
                     println!(
                         "pid:{}, tid:{}\nsyscall_id:\t{:?}",

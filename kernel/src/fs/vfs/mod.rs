@@ -13,6 +13,7 @@ mod page_cache;
 use core::{ops::Deref, ptr::NonNull};
 
 use crate::{
+    error::SystemError,
     fs::{
         ROOT_FS,
         file::{File, FileSeekMethod},
@@ -186,21 +187,21 @@ impl VirtualFile {
 }
 
 impl File for VirtualFile {
-    fn read(&self, buf: &mut [u8]) -> Option<usize> {
+    fn read(&self, buf: &mut [u8]) -> Result<usize, SystemError> {
         let now_offset = *self.offset.lock();
-        Some(self.inode.read_at(now_offset, buf))
+        Ok(self.inode.read_at(now_offset, buf))
     }
 
-    fn write(&self, buf: &[u8]) -> Option<usize> {
+    fn write(&self, buf: &[u8]) -> Result<usize, SystemError> {
         let file_size = self.inode.metadata().size;
         let now_offset = *self.offset.lock();
         if now_offset >= file_size {
             self.inode.resize(now_offset + 1);
         }
-        Some(self.inode.write_at(now_offset, buf))
+        Ok(self.inode.write_at(now_offset, buf))
     }
 
-    fn seek(&self, method: FileSeekMethod) -> Option<usize> {
+    fn seek(&self, method: FileSeekMethod) -> Result<usize, SystemError> {
         let mut now_offset = self.offset.lock();
         let pos = match method {
             FileSeekMethod::Absolute(pos) => pos,
@@ -214,6 +215,6 @@ impl File for VirtualFile {
             FileSeekMethod::End(offset) => (self.inode.metadata().size as isize + offset) as usize,
         };
         *now_offset = pos;
-        Some(pos)
+        Ok(pos)
     }
 }

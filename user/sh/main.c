@@ -1,3 +1,4 @@
+#include "../lib/errno.h"
 #include "../lib/stdio.h"
 #include "../lib/string.h"
 #include "../lib/sys/file.h"
@@ -12,11 +13,17 @@ static char buf[MAXLINE];
 
 int main(void) {
   // sh 为第一个进程，操作系统启动该程序的时候会自动打开 stdin、stdout 和 stderr
-  if (getcwd(cwd) < 0) {
+  if (getcwd(cwd, sizeof(cwd)) == 0) {
     // 可能内核给的初始 cwd 被删了（虽然不太可能），遇到这种情况就改为根目录
-    strcpy(cwd, "/");
-    chdir("/");
-    printf("sh: getcwd failed, changed to root directory\n");
+    printf("sh: getcwd failed, changed to root directory: %s\n",
+           strerror(errno));
+    if (chdir("/") < 0) {
+      printf("sh: cannot cd /: %s\n", strerror(errno));
+      // TODO 后续改成 exit
+      return 1;
+    } else {
+      strcpy(cwd, "/");
+    }
   }
 
   // TODO 设置关闭控制台 ICANON
@@ -29,13 +36,19 @@ int main(void) {
       continue;
 
     if (buf[0] == 'c' && buf[1] == 'd' && buf[2] == ' ') {
-      if (chdir(buf + 3) < 0)
-        printf("sh: cannot cd %s\n", buf + 3);
-      else if (getcwd(cwd) < 0) {
+      if (chdir(buf + 3) < 0) {
+        printf("sh: cannot cd %s: %s\n", buf + 3, strerror(errno));
+      } else if (getcwd(cwd, sizeof(cwd)) == 0) {
         // 成功切换目录了，但是获取路径又失败，这种情况比较罕见，遇到了就回退到根目录
-        chdir("/");
-        strcpy(cwd, "/");
-        printf("sh: getcwd failed, changed to root directory\n");
+        printf("sh: getcwd failed, changed to root directory: %s\n",
+               strerror(errno));
+        if (chdir("/") < 0) {
+          printf("sh: cannot cd /: %s\n", strerror(errno));
+          // TODO 后续改成 exit
+          return 1;
+        } else {
+          strcpy(cwd, "/");
+        }
       }
       continue;
     }

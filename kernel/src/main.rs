@@ -25,6 +25,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 mod arch;
 mod console;
 mod driver;
+mod error;
 mod exception;
 mod fs;
 mod lang_items;

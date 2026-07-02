@@ -1,5 +1,6 @@
 use crate::{
     driver::UART0,
+    error::SystemError,
     fs::file::{File, FileSeekMethod},
     sync::spin::SpinMutex,
 };
@@ -24,19 +25,19 @@ pub fn print(args: fmt::Arguments) {
 }
 
 impl File for Stdout {
-    fn read(&self, _buf: &mut [u8]) -> Option<usize> {
-        None
+    fn read(&self, _buf: &mut [u8]) -> Result<usize, SystemError> {
+        Err(SystemError::EBADF)
     }
 
-    fn write(&self, buf: &[u8]) -> Option<usize> {
+    fn write(&self, buf: &[u8]) -> Result<usize, SystemError> {
         for c in buf {
             UART0.put(*c);
         }
-        Some(buf.len())
+        Ok(buf.len())
     }
 
-    fn seek(&self, _method: FileSeekMethod) -> Option<usize> {
-        None
+    fn seek(&self, _method: FileSeekMethod) -> Result<usize, SystemError> {
+        Err(SystemError::EBADF)
     }
 }
 
@@ -57,18 +58,18 @@ macro_rules! println {
 pub struct Stdin;
 
 impl File for Stdin {
-    fn read(&self, buf: &mut [u8]) -> Option<usize> {
+    fn read(&self, buf: &mut [u8]) -> Result<usize, SystemError> {
         for c in buf.iter_mut() {
             *c = UART0.get();
         }
-        Some(buf.len())
+        Ok(buf.len())
     }
 
-    fn write(&self, _buf: &[u8]) -> Option<usize> {
-        None
+    fn write(&self, _buf: &[u8]) -> Result<usize, SystemError> {
+        Err(SystemError::EBADF)
     }
 
-    fn seek(&self, _method: FileSeekMethod) -> Option<usize> {
-        None
+    fn seek(&self, _method: FileSeekMethod) -> Result<usize, SystemError> {
+        Err(SystemError::EBADF)
     }
 }

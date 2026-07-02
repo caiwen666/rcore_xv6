@@ -2,26 +2,27 @@ use syscall_macros::syscall;
 
 use crate::{
     arch::MMArch,
+    error::SystemError,
     mm::{MemoryManagementArch, address::VirtAddr},
     process::{cpu::CPUManager, mm::USER_HEAP_START},
 };
 
 #[syscall(name = "SYS_SBRK", id = 3)]
-fn sys_sbrk(args: [usize; 6]) -> isize {
+fn sys_sbrk(args: [usize; 6]) -> Result<usize, SystemError> {
     let increment = args[0] as isize;
 
     let task = CPUManager::current_task().unwrap();
     let resource = task.process_resource();
     let mut resource_guard = resource.lock();
 
-    let result = USER_HEAP_START as isize + resource_guard.heap_size;
+    let result = USER_HEAP_START + resource_guard.heap_size as usize;
     if increment == 0 {
-        return result;
+        return Ok(result);
     }
     if resource_guard.heap_size.checked_add(increment).is_none()
         || resource_guard.heap_size + increment < 0
     {
-        return -1;
+        return Err(SystemError::ENOMEM);
     }
 
     resource_guard.heap_size += increment;
@@ -43,5 +44,5 @@ fn sys_sbrk(args: [usize; 6]) -> isize {
         memory_space.resize(VirtAddr::new(USER_HEAP_START), heap_size as usize);
     }
 
-    result
+    Ok(result)
 }
