@@ -4,15 +4,14 @@ use crate::{
     arch::MMArch,
     error::SystemError,
     mm::{MemoryManagementArch, address::VirtAddr},
-    process::{cpu::CPUManager, mm::USER_HEAP_START},
+    process::{ProcessManager, mm::USER_HEAP_START},
 };
 
 #[syscall(name = "SYS_SBRK", id = 3)]
 fn sys_sbrk(args: [usize; 6]) -> Result<usize, SystemError> {
     let increment = args[0] as isize;
 
-    let task = CPUManager::current_task().unwrap();
-    let resource = task.process_resource();
+    let resource = ProcessManager::current_resource();
     let mut resource_guard = resource.lock();
 
     let result = USER_HEAP_START + resource_guard.heap_size as usize;

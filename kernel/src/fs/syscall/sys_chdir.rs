@@ -4,7 +4,7 @@ use crate::{
     error::SystemError,
     fs::vfs::{interface::FileType, lookup},
     mm::{address::VirtAddr, mem_space::MemoryPermission},
-    process::cpu::CPUManager,
+    process::ProcessManager,
 };
 
 #[syscall(name = "SYS_CHDIR", id = 2)]
@@ -12,7 +12,7 @@ fn sys_chdir(args: [usize; 6]) -> Result<usize, SystemError> {
     const MAXPATH: usize = 128;
     let path_addr = VirtAddr::new(args[0]);
 
-    let task = CPUManager::current_task().unwrap();
+    let task = ProcessManager::current_task();
     let resource = task.process_resource();
     let resource_guard = resource.lock();
     let memory_space = resource_guard.memory_space.as_ref().unwrap();

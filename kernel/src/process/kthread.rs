@@ -1,4 +1,4 @@
-use crate::process::{cpu::CPUManager, schedule::TaskScheduler, task::TaskControlBlock};
+use crate::process::{ProcessManager, schedule::TaskScheduler, task::TaskControlBlock};
 use alloc::boxed::Box;
 use core::cell::UnsafeCell;
 
@@ -22,7 +22,7 @@ impl KthreadEntryCell {
     {
         let f_with_exit = move || {
             f();
-            CPUManager::exit_current_task();
+            ProcessManager::exit();
         };
         Self {
             inner: UnsafeCell::new(Some(Box::new(f_with_exit))),

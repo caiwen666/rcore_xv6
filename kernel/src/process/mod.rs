@@ -9,7 +9,8 @@ pub mod timer;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
-    arch::MMArch,
+    arch::{IrqArch, MMArch},
+    exception::InterruptArch,
     fs::{
         ROOT_FS,
         file::File,
@@ -76,16 +77,33 @@ impl ProcessManager {
 }
 
 impl ProcessManager {
+    /// 获取当前任务
+    ///
+    /// # Panics
+    ///
+    /// - 如果当前没有任务，则 panic
+    pub fn current_task() -> Arc<TaskControlBlock> {
+        let interrupted = IrqArch::get_interrupt_state();
+        IrqArch::disable_interrupt();
+        let cpu = unsafe { CPUManager::current_cpu() };
+        cpu.spinning_state.push_lock(interrupted);
+        let task = cpu.current_task.clone().unwrap();
+        if cpu.spinning_state.pop_lock() {
+            IrqArch::enable_interrupt();
+        }
+        task
+    }
+
     /// 获取当前进程
     #[expect(unused)]
-    pub fn current() -> Arc<ProcessControlBlock> {
-        let task = CPUManager::current_task().unwrap();
+    pub fn current_process() -> Arc<ProcessControlBlock> {
+        let task = Self::current_task();
         task.process().clone()
     }
 
     /// 获取当前进程资源
     pub fn current_resource() -> Arc<SpinMutex<ProcessResource>> {
-        let task = CPUManager::current_task().unwrap();
+        let task = Self::current_task();
         task.process_resource().clone()
     }
 }

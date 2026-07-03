@@ -1,4 +1,4 @@
-use crate::process::{cpu::CPUManager, timer::check_sleep_timer};
+use crate::process::{ProcessManager, cpu::CPUManager, timer::check_sleep_timer};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 /// 时钟中断的间隔，单位为毫秒
@@ -26,7 +26,7 @@ pub unsafe fn timer_handler(from_kernel: bool) {
     // 如果从用户态过来的，当前 CPU 上一定是有任务的
     // 如果从内核态过来的，当前 CPU 上未必有任务，需要再判断一下
     if !from_kernel || (from_kernel && cpu.current_task.is_some()) {
-        cpu.yield_current_task();
+        ProcessManager::yield_current();
     }
 }
 

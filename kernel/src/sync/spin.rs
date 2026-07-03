@@ -108,7 +108,7 @@ impl<T: ?Sized> SpinMutex<T> {
 }
 
 impl<T: ?Sized> SpinMutexGuard<'_, T> {
-    /// 将 SpinMutexGuard 释放，使其在 drop 时不会被自动解锁
+    /// 将 SpinMutexGuard 泄露，使其在 drop 时不会被自动解锁
     ///
     /// # Safety
     ///

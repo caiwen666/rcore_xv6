@@ -1,6 +1,6 @@
 use crate::{
     process::{
-        cpu::CPUManager,
+        ProcessManager,
         schedule::TaskScheduler,
         task::{TaskControlBlock, TaskStatus},
     },
@@ -26,7 +26,7 @@ impl Condvar {
     /// 调用者需要保证调用时只持有 guard 对应的自旋锁，否则持有的其他锁可能会死锁，
     /// 如果调用者未满足该条件，则 panic
     pub fn wait<'a, T>(&self, guard: SpinMutexGuard<'a, T>) -> SpinMutexGuard<'a, T> {
-        let current_task = CPUManager::current_task().unwrap();
+        let current_task = ProcessManager::current_task();
 
         let mut queue = self.queue.lock();
         // 已经给 queue 加上锁了，所以可以直接释放 guard
@@ -40,22 +40,7 @@ impl Condvar {
         drop(queue);
 
         task_inner.status = TaskStatus::Blocked;
-        let current_context = &mut task_inner.task_context as *mut _;
-        // 有可能回到调度循环之后，当前任务被杀死，然后永远回不来了
-        // 所以这里需要搞一个类似 [CPU::yield_current_task] 的操作
-        unsafe { task_inner.leak() };
-        drop(task_inner);
-        drop(current_task);
-
-        // SAFETY: 目前还持有对当前线程的锁，所以中断是关闭的
-        let cpu = unsafe { CPUManager::current_cpu() };
-        // 这里只持有对当前 Task 的锁
-        cpu.go_scheduler(current_context);
-
-        let cpu = unsafe { CPUManager::current_cpu() };
-        let current_task = cpu.current_task.clone().unwrap();
-        // SAFETY: 到这里说明从调度循环回来了。在回来之前，调度循环会加锁
-        unsafe { current_task.unlock() };
+        ProcessManager::go_scheduler(task_inner);
 
         // 之前我们将 guard 对应的锁释放了，现在我们重新加锁
         let mut unused_guard = lock.lock();

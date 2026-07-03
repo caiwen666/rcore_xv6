@@ -3,7 +3,7 @@ use core::{cmp::Ordering, time::Duration};
 use crate::{
     exception::timer::{TIMER_INTERVAL, jiffies},
     process::{
-        cpu::CPUManager,
+        ProcessManager,
         schedule::TaskScheduler,
         task::{TaskControlBlock, TaskStatus},
     },
@@ -57,7 +57,7 @@ pub fn sleep_with_expire(expire_us: usize) {
     // 没用 condvar 来做睡眠和唤醒
     // 用 condvar 的话需要取 condvar 加入堆之后的引用来睡眠
     // 而 BinaryHeap 不支持插入元素后返回元素在堆中引用
-    let current_task = CPUManager::current_task().unwrap();
+    let current_task = ProcessManager::current_task();
     let sleep_timer = SleepTimer {
         expire_us,
         task: current_task.clone(),
@@ -68,19 +68,7 @@ pub fn sleep_with_expire(expire_us: usize) {
     // 拿到 task_inner 之后再释放 queue，防止我们还没完成睡眠就被唤醒了
     drop(queue);
     task_inner.status = TaskStatus::Blocked;
-    let current_context = &mut task_inner.task_context as *mut _;
-    // 有可能回到调度循环之后，当前任务被杀死，然后永远回不来了
-    // 所以这里需要搞一个类似 [CPU::yield_current_task] 的操作
-    unsafe { task_inner.leak() };
-    drop(task_inner);
-    drop(current_task);
-    let cpu = unsafe { CPUManager::current_cpu() };
-    cpu.go_scheduler(current_context);
-
-    let cpu = unsafe { CPUManager::current_cpu() };
-    let current_task = cpu.current_task.clone().unwrap();
-    // SAFETY: 到这里说明从调度循环回来了。在回来之前，调度循环会加锁
-    unsafe { current_task.unlock() };
+    ProcessManager::go_scheduler(task_inner);
 }
 
 /// 休眠当前线程，直到过了 `interval` 之后唤醒

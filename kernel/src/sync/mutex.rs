@@ -1,5 +1,5 @@
 use crate::{
-    process::cpu::CPUManager,
+    process::ProcessManager,
     sync::{condvar::Condvar, spin::SpinMutex},
 };
 use core::{
@@ -56,7 +56,7 @@ impl<T: ?Sized> Mutex<T> {
         let mut inner = self.inner.lock();
         while inner.locked {
             let (owner_pid, owner_tid) = inner.owner.expect("Mutex is locked but no owner");
-            let current_task = CPUManager::current_task().expect("Cannot get current task");
+            let current_task = ProcessManager::current_task();
             if current_task.id == owner_tid && current_task.process().pid == owner_pid {
                 panic!(
                     "deadlock detected: {} is locked by the same task, pid: {}, tid: {}",
@@ -66,14 +66,14 @@ impl<T: ?Sized> Mutex<T> {
             inner = self.condvar.wait(inner);
         }
         inner.locked = true;
-        let current_task = CPUManager::current_task().expect("Cannot get current task");
+        let current_task = ProcessManager::current_task();
         inner.owner = Some((current_task.process().pid, current_task.id));
         MutexGuard { mutex: self }
     }
 
     fn unlock(&self) {
         let mut inner = self.inner.lock();
-        let current_task = CPUManager::current_task().expect("Cannot get current task");
+        let current_task = ProcessManager::current_task();
         let (owner_pid, owner_tid) = inner.owner.expect("Mutex is locked but no owner");
         if owner_pid != current_task.process().pid || owner_tid != current_task.id {
             panic!("Mutex is not locked by the current task");

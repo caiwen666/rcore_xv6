@@ -4,8 +4,7 @@ use crate::{
     exception::InterruptArch,
     process::{
         context::{ArchTaskContext, TaskContext},
-        schedule::TaskScheduler,
-        task::{TaskControlBlock, TaskStatus},
+        task::TaskControlBlock,
     },
 };
 use alloc::sync::Arc;
@@ -73,67 +72,6 @@ impl CPU {
             idle_task_context: ArchTaskContext::zero_init(),
         }
     }
-
-    /// 当前正在运行的任务主动让出去
-    ///
-    /// # Panics
-    ///
-    /// - 如果当前没有任务，则 panic
-    /// - 如果当前任务状态不为 RUNNING，则 panic
-    pub fn yield_current_task(&mut self) {
-        // 由于获取当前 CPU 需要关闭中断，所以此时中断就是关闭的
-        let current_task = self.current_task.as_ref().cloned().unwrap();
-        let mut task_inner = current_task.lock();
-        assert!(
-            task_inner.status == TaskStatus::Running,
-            "Current task status is not running: {:?}",
-            task_inner.status
-        );
-        task_inner.status = TaskStatus::Ready;
-        TaskScheduler::push(current_task.clone());
-        let current_context = &mut task_inner.task_context as *mut _;
-        // 有可能回到调度器之后，当前任务被杀死，然后永远回不来了
-        // 所以这里需要把当前函数作用域内的 Arc 释放，否则这里永远贡献一个 Arc 引用计数，使得当前任务永远无法被回收
-        // 由于当前的 task_inner 引用自 current_task，所以需要先把 task_inner 搞掉，但是同时又不能释放锁
-        // SAFETY: 去往调度循环之后，调度循环那边会释放锁
-        unsafe { task_inner.leak() };
-        drop(task_inner);
-        drop(current_task);
-        // 当前 CPU 的 current_task 还保留一个引用计数，所以这里的 current_task 不会变为悬垂引用
-        self.go_scheduler(current_context);
-        // 这里需要重新获取当前 CPU 的引用，因为当前任务可能已经被调度到别的 CPU 上
-        let cpu = unsafe { CPUManager::current_cpu() };
-        let current_task = cpu.current_task.clone().unwrap();
-        // SAFETY: 到这里说明从调度循环回来了。在回来之前，调度循环会加锁
-        unsafe { current_task.unlock() };
-    }
-
-    /// 将当前上下文保存，并回到调度循环中
-    ///
-    /// 整个过程中必须对任务加着锁
-    ///
-    /// # Notes
-    ///
-    /// 注意，该函数返回之后，需要重新获取当前 CPU 的引用，不能再用调用该函数之前的 CPU 引用了，
-    /// 因为当前任务可能已经被调度到别的 CPU 上
-    pub fn go_scheduler(&mut self, current_context: *mut ArchTaskContext) {
-        // 由于获取当前 CPU 需要关闭中断，所以此时中断就是关闭的
-        // 这里应该确保只有对 task_inner 的锁，不能再有其他的自旋锁
-        // 否则多余的自旋锁会直到当前任务被调度回来才能被释放
-        if core::hint::unlikely(self.spinning_state.count != 1) {
-            panic!("to_scheduler: spinning_state.count != 1");
-        }
-        // 这里需要保存当前 CPU 上的自旋锁的状态，并在调度回来之后恢复
-        // 自旋锁的状态实际上并不是属于 CPU 的，而是属于当前任务的
-        // 这里只需要保存一下施加第一个自旋锁之前的中断状态即可，因为当前自旋锁的适量必然是 1
-        let interrupted = self.spinning_state.interrupted;
-        // 这里会回到调度循环中，但是调度循环那边，在调度该任务的时候会持有一个锁
-        // 这里的锁会在调度循环那里被释放掉
-        unsafe { IrqArch::switch_context(current_context, &mut self.idle_task_context as *mut _) };
-        // 这里需要重新获取当前 CPU 的引用，因为当前任务可能已经被调度到别的 CPU 上
-        let cpu = unsafe { CPUManager::current_cpu() };
-        cpu.spinning_state.interrupted = interrupted;
-    }
 }
 
 pub struct CPUManager {
@@ -163,41 +101,5 @@ impl CPUManager {
         let cpus = unsafe { &mut *CPU_MANAGER.cpus.get() };
         // SAFETY: 此时中断已经关闭
         &mut cpus[unsafe { arch::cpu::cpu_id() }]
-    }
-
-    /// 获取当前任务
-    pub fn current_task() -> Option<Arc<TaskControlBlock>> {
-        let interrupted = IrqArch::get_interrupt_state();
-        IrqArch::disable_interrupt();
-        let cpu = unsafe { CPUManager::current_cpu() };
-        cpu.spinning_state.push_lock(interrupted);
-        let task = cpu.current_task.clone();
-        if cpu.spinning_state.pop_lock() {
-            IrqArch::enable_interrupt();
-        }
-        task
-    }
-
-    /// 退出当前任务
-    ///
-    /// # Preconditions
-    ///
-    /// - 调用前应确保应该 drop 掉的东西全都 drop 了，否则会出现资源泄露
-    pub fn exit_current_task() -> ! {
-        let task = CPUManager::current_task().expect("exit_kthread: current_task is None");
-        let mut task_inner = task.lock();
-        // SAFETY: 当前正在对 task_inner 加锁，所以中断还是关闭的
-        let cpu = unsafe { CPUManager::current_cpu() };
-        let current_context = &mut task_inner.task_context as *mut _;
-        // 下面行为的原因见 CPUManager::yield_current_task 的注释
-        // SAFETY: 调度循环会进行解锁
-        unsafe { task_inner.leak() };
-        drop(task_inner);
-        drop(task);
-        // 直接返回调度循环，由于我们没有把当前的任务放到调度队列里，因此该任务不会被再次调度了
-        // 理论上当前 task 仅剩挂在 CPU 上的引用，回到调度循环后这唯一的引用也没了，于是整个
-        // 任务会被释放掉
-        cpu.go_scheduler(current_context);
-        unreachable!()
     }
 }
