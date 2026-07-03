@@ -4,7 +4,16 @@ LD      := $(TOOLPREFIX)ld
 OBJCOPY := $(TOOLPREFIX)objcopy
 READELF := $(TOOLPREFIX)readelf
 
-APP      ?= hello
+# 单个程序：make APP=hello
+# 多个程序：make APPS="hello sh"
+# 在 Makefile 内写默认值时不要加引号，应写：APPS ?= hello sh
+# APP 的名字应该是 user 目录下对应的 .c 文件或是文件夹。
+# 对于前者，会编译 .c 文件，对于后者，会将文件夹下的所有文件都编译。
+APPS ?= hello sh
+ifneq ($(origin APP),undefined)
+APPS := $(APP)
+endif
+
 TARGET   := target
 CRT_DIR  := lib/crt
 
@@ -29,38 +38,42 @@ LIB_SRCS := $(shell find lib -type f -name '*.c' ! -path '$(CRT_DIR)/*')
 LIB_OBJS := $(patsubst lib/%.c,$(TARGET)/lib/%.o,$(LIB_SRCS))
 LIB_O    := $(TARGET)/lib.o
 
-# 应用源码：APP 为目录时编译该目录下全部 .c，否则编译 $(APP).c
-ifneq ($(wildcard $(APP)/*.c),)
-APP_SRCS := $(sort $(wildcard $(APP)/*.c))
-APP_OBJS := $(addprefix $(TARGET)/,$(notdir $(APP_SRCS:.c=.o)))
-else
-APP_SRCS := $(APP).c
-APP_OBJS := $(TARGET)/$(APP).o
-endif
-
 CRT0_O   := $(TARGET)/crt0.o
-APP_BIN  := $(TARGET)/$(APP)
+APP_BINS := $(addprefix $(TARGET)/,$(APPS))
 
 .PHONY: all clean lib
 
-all: $(APP_BIN)
+all: $(APP_BINS)
 
 lib: $(LIB_O)
 
-$(APP_BIN): $(APP_OBJS) $(LIB_O) $(CRT0_O) | $(TARGET)
-	$(CC) $(LDFLAGS) -o $@ $^
+# 每个 app 单独生成编译与链接规则，对象文件放在 target/obj/<app>/ 下避免与二进制 target/<app> 冲突
+define app_rules
+ifneq ($$(wildcard $(1)/*.c),)
+APP_OBJS_$(1) := $$(addprefix $(TARGET)/obj/$(1)/,$$(notdir $$(patsubst %.c,%.o,$$(sort $$(wildcard $(1)/*.c)))))
+
+$(TARGET)/obj/$(1)/%.o: $(1)/%.c | $(TARGET)
+	@mkdir -p $$(dir $$@)
+	$(CC) $(CFLAGS) -c -o $$@ $$<
+else
+APP_OBJS_$(1) := $(TARGET)/obj/$(1)/$(1).o
+
+$(TARGET)/obj/$(1)/$(1).o: $(1).c | $(TARGET)
+	@mkdir -p $$(dir $$@)
+	$(CC) $(CFLAGS) -c -o $$@ $$<
+endif
+
+$(TARGET)/$(1): $$(APP_OBJS_$(1)) $(LIB_O) $(CRT0_O) | $(TARGET)
+	$(CC) $(LDFLAGS) -o $$@ $$^
+endef
+
+$(foreach app,$(APPS),$(eval $(call app_rules,$(app))))
 
 $(LIB_O): $(LIB_OBJS) | $(TARGET)
 	$(LD) -r -o $@ $^
 
 $(TARGET)/lib/%.o: lib/%.c | $(TARGET)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-$(TARGET)/%.o: %.c | $(TARGET)
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-$(TARGET)/%.o: $(APP)/%.c | $(TARGET)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(CRT0_O): $(CRT_DIR)/crt0.c | $(TARGET)
