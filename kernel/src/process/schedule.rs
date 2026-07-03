@@ -54,8 +54,8 @@ pub unsafe fn schedule_loop() -> ! {
             cpu.current_task = Some(task.clone());
             task_inner.status = TaskStatus::Running;
             // 不用释放 task_inner
-            // 如果这里的切换回到了 CPU::go_scheduler，
-            // 其要求必须是拿住线程的锁的，所以 CPU::go_scheduler 的调用者会释放
+            // 如果这里的切换回到了 ProcessManager::go_scheduler，
+            // 其要求必须是拿住线程的锁的，所以 ProcessManager::go_scheduler 的调用者会释放
             // 如果这里的切换去到了 task_entry，这个函数最开始也会把锁释放掉
             unsafe {
                 // SAFETY: 当前持有了 task_inner 的锁，所以中断是关闭的
