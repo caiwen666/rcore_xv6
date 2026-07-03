@@ -22,7 +22,7 @@ impl KthreadEntryCell {
     {
         let f_with_exit = move || {
             f();
-            ProcessManager::exit_current_task();
+            ProcessManager::exit();
         };
         Self {
             inner: UnsafeCell::new(Some(Box::new(f_with_exit))),

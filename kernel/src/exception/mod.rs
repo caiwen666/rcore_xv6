@@ -15,6 +15,9 @@ pub trait InterruptArch {
     fn get_interrupt_state() -> bool;
     /// 切换上下文
     ///
+    /// **WARNING**：注意，该函数返回之后，需要重新获取当前 CPU 的引用，不能再用调用该函数之前的 CPU 引用了，
+    /// 因为当前任务可能已经被调度到别的 CPU 上。
+    ///
     /// # Safety
     ///
     /// 调用者需要确保调用时的中断是关闭的
