@@ -1,10 +1,9 @@
 mod interface;
 
 use crate::{
-    sync::{
-        condvar::Condvar,
-        spin::{SpinMutex, SpinMutexGuard},
-    },
+    error::SystemError,
+    process::sleep::WaitQueue,
+    sync::spin::{SpinMutex, SpinMutexGuard},
     utils::RingBuffer,
 };
 use interface::{UartFIFO, UartInterface, UartInterrupt};
@@ -14,9 +13,9 @@ const BUF_SIZE: usize = 512;
 pub struct Uart {
     interface: UartInterface,
     put_buf: SpinMutex<RingBuffer<u8, BUF_SIZE>>,
-    put_condvar: Condvar,
+    put_wait_queue: WaitQueue,
     get_buf: SpinMutex<RingBuffer<u8, BUF_SIZE>>,
-    get_condvar: Condvar,
+    get_wait_queue: WaitQueue,
 }
 
 impl Uart {
@@ -33,9 +32,9 @@ impl Uart {
         let uart = Self {
             interface: UartInterface::new(base_addr),
             put_buf: SpinMutex::new(RingBuffer::new(), "uart_put"),
-            put_condvar: Condvar::new(),
+            put_wait_queue: WaitQueue::new(),
             get_buf: SpinMutex::new(RingBuffer::new(), "uart_get"),
-            get_condvar: Condvar::new(),
+            get_wait_queue: WaitQueue::new(),
         };
         uart.init();
         uart
@@ -71,20 +70,25 @@ impl Uart {
     ///
     /// 字节不会立刻输出，而是会先放入内核的缓冲区中。如果缓冲区满，则当前线程会被挂起。
     ///
-    /// # Panic
+    /// **会阻塞**
     ///
-    /// 必须在线程中调用该函数，否则会 panic
-    pub fn put(&self, ch: u8) {
-        let mut buf = self.put_buf.lock();
-        loop {
-            if buf.is_full() {
-                buf = self.put_condvar.wait(buf);
-            } else {
-                buf.push(ch);
-                self.start_put(buf);
-                break;
-            }
-        }
+    /// # Errors
+    ///
+    /// - [SystemError::EINTR] 被信号中断则返回该错误
+    pub fn put(&self, ch: u8) -> Result<(), SystemError> {
+        self.put_wait_queue.wait_until(
+            || {
+                let mut buf = self.put_buf.lock();
+                if buf.is_full() {
+                    None
+                } else {
+                    buf.push(ch);
+                    self.start_put(buf);
+                    Some(())
+                }
+            },
+            true,
+        )
     }
 
     /// 开始发送数据，直到缓冲区为空或是 UART 繁忙为止
@@ -97,21 +101,24 @@ impl Uart {
             let ch = buf.pop().unwrap();
             self.interface.put(ch);
         }
-        self.put_condvar.notify_all();
+        self.put_wait_queue.wake_all();
     }
 
     /// 读入一个字节
     ///
     /// **会堵塞**
-    pub fn get(&self) -> u8 {
-        let mut buf = self.get_buf.lock();
-        loop {
-            if buf.is_empty() {
-                buf = self.get_condvar.wait(buf);
-            } else {
-                return buf.pop().unwrap();
-            }
-        }
+    pub fn get(&self) -> Result<u8, SystemError> {
+        self.get_wait_queue.wait_until(
+            || {
+                let mut buf = self.get_buf.lock();
+                if buf.is_empty() {
+                    None
+                } else {
+                    Some(buf.pop().unwrap())
+                }
+            },
+            true,
+        )
     }
 
     /// 开始接收数据，直到缓冲区为满或是没有可读入的数据为止
@@ -123,7 +130,7 @@ impl Uart {
             let ch = self.interface.get();
             buf.push(ch);
         }
-        self.get_condvar.notify_all();
+        self.get_wait_queue.wake_all();
     }
 
     /// 处理中断

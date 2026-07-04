@@ -31,7 +31,7 @@ impl File for Stdout {
 
     fn write(&self, buf: &[u8]) -> Result<usize, SystemError> {
         for c in buf {
-            UART0.put(*c);
+            UART0.put(*c)?;
         }
         Ok(buf.len())
     }
@@ -60,7 +60,7 @@ pub struct Stdin;
 impl File for Stdin {
     fn read(&self, buf: &mut [u8]) -> Result<usize, SystemError> {
         for c in buf.iter_mut() {
-            *c = UART0.get();
+            *c = UART0.get()?;
         }
         Ok(buf.len())
     }

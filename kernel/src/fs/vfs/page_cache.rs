@@ -64,7 +64,7 @@ impl VirtualIndexNode {
         if cached_page.frame.is_some() {
             return cached_page;
         }
-        let inode = self.inner_locked.lock().inode();
+        let inode = self.inode();
         // 先 drop 掉，然后改为先对 `page_lock` 加锁再对 `cached_page` 加锁。
         // 这样能保证和 [VirtualIndexNode::sync] 中的加锁顺序一致，避免死锁。
         drop(cached_page);
@@ -113,7 +113,7 @@ impl VirtualIndexNode {
     ///
     /// 返回成功读取的字节数
     pub fn read_at(&self, offset: usize, buf: &mut [u8]) -> usize {
-        let metadata = self.inner_locked.lock().inode().metadata();
+        let metadata = self.inode().metadata();
         if offset >= metadata.size {
             return 0;
         }
@@ -149,7 +149,7 @@ impl VirtualIndexNode {
     ///
     /// 返回成功写入的字节数
     pub fn write_at(&self, offset: usize, buf: &[u8]) -> usize {
-        let metadata = self.inner_locked.lock().inode().metadata();
+        let metadata = self.inode().metadata();
         if offset >= metadata.size {
             return 0;
         }
@@ -181,7 +181,7 @@ impl VirtualIndexNode {
     ///
     /// **会阻塞**
     pub fn sync(&self) {
-        let inode = self.inner_locked.lock().inode();
+        let inode = self.inode();
         let mut working_dirty = BTreeSet::new();
         let _page_lock = self.page_cache.page_lock.lock();
         let mut dirty = self.page_cache.dirty.lock();
@@ -218,7 +218,7 @@ impl VirtualIndexNode {
     pub fn resize(&self, new_size: usize) {
         // 这里也拿 writing_back 锁，这样就能保证 resize 和 sync 不会同时进行
         let _page_lock = self.page_cache.page_lock.lock();
-        let inode = self.inner_locked.lock().inode();
+        let inode = self.inode();
         if inode.metadata().file_type != FileType::File {
             panic!("resize called on non-file inode");
         }

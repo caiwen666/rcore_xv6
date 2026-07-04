@@ -4,6 +4,9 @@ pub enum SystemError {
     /// 没有指定的文件或目录。
     /// No such file or directory.
     ENOENT = 2,
+    /// 被中断的函数
+    /// Interrupted function.
+    EINTR = 4,
     /// 错误的文件描述符
     /// Bad file descriptor.
     EBADF = 9,

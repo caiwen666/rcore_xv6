@@ -3,8 +3,8 @@ pub mod cpu;
 pub mod kthread;
 pub mod mm;
 pub mod schedule;
+pub mod sleep;
 pub mod task;
-pub mod timer;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 

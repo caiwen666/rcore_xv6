@@ -1,11 +1,14 @@
-use core::{ptr::NonNull, time::Duration};
+use core::{cell::UnsafeCell, ptr::NonNull, time::Duration};
 
 use alloc::boxed::Box;
 
 use crate::{
     fs::vfs::{VirtualIndexNodeInner, VirtualIndexNodeInnerLocked, page_cache::PageCache},
-    process::{kthread::spawn_kthread, timer::sleep_with_interval},
-    sync::{condvar::Condvar, mutex::Mutex, spin::SpinMutex},
+    process::{
+        kthread::spawn_kthread,
+        sleep::{Completion, sleep_with_interval},
+    },
+    sync::{mutex::Mutex, spin::SpinMutex},
 };
 
 use super::{VirtualFileSystem, VirtualIndexNode};
@@ -13,10 +16,9 @@ use super::{VirtualFileSystem, VirtualIndexNode};
 impl VirtualFileSystem {
     fn new_inode(&self, id: u64) -> VirtualIndexNode {
         let inner = Box::new(VirtualIndexNodeInner {
-            condvar: Condvar::new(),
+            ready: Completion::new(),
             inner_locked: SpinMutex::new(
                 VirtualIndexNodeInnerLocked {
-                    inode: None,
                     strong_count: 1,
                     weak_count: 0,
                     to_destroy: false,
@@ -30,6 +32,7 @@ impl VirtualFileSystem {
             page_cache: PageCache::new(),
             id,
             destroying_lock: Mutex::new((), "inode_destroying_lock"),
+            inode: UnsafeCell::new(None),
         });
         VirtualIndexNode {
             ptr: unsafe { NonNull::new_unchecked(Box::leak(inner)) },
@@ -45,14 +48,7 @@ impl VirtualFileSystem {
         let mut cache = self.inode_cache.lock();
         if let Some(inode) = cache.get(&id).cloned() {
             drop(cache);
-            let mut inner_locked = inode.inner_locked.lock();
-            // 如果 inode 正在初始化中，那么需要等待
-            if inner_locked.inode.is_none() {
-                inner_locked = inode.condvar.wait(inner_locked);
-            }
-            // 不需要 while，只要被唤醒了就说明 inode 已经初始化好了
-            assert!(inner_locked.inode.is_some());
-            drop(inner_locked);
+            inode.ready.wait(false).unwrap();
             return inode;
         }
         // 没有缓存的话，就从缓存表中创建一个占位的
@@ -62,10 +58,10 @@ impl VirtualFileSystem {
         drop(cache);
         // 这里会存在堵塞
         let inner_inode = self.inner_fs.get_inode(id);
-        let mut inner_locked = inode.inner_locked.lock();
-        inner_locked.inode = Some(inner_inode);
-        inode.condvar.notify_all();
-        drop(inner_locked);
+        unsafe {
+            (*inode.inode.get()).replace(inner_inode);
+        }
+        inode.ready.complete();
         inode
     }
 }
@@ -191,7 +187,7 @@ impl VirtualIndexNode {
     ///
     /// **会堵塞**
     pub(super) fn find_with_cache(&self, name: &str) -> Option<VirtualIndexNode> {
-        let inode = self.inner_locked.lock().inode();
+        let inode = self.inode();
         let id = inode.find(name)?;
         let fs = self.fs();
         Some(fs.get_inode_with_cache(id))

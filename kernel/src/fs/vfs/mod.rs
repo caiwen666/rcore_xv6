@@ -10,7 +10,7 @@ pub mod interface;
 mod mount;
 mod page_cache;
 
-use core::{ops::Deref, ptr::NonNull};
+use core::{cell::UnsafeCell, ops::Deref, ptr::NonNull};
 
 use crate::{
     error::SystemError,
@@ -22,7 +22,8 @@ use crate::{
             page_cache::PageCache,
         },
     },
-    sync::{condvar::Condvar, mutex::Mutex, spin::SpinMutex},
+    process::sleep::Completion,
+    sync::{mutex::Mutex, spin::SpinMutex},
 };
 use alloc::{
     collections::btree_map::BTreeMap,
@@ -75,14 +76,18 @@ pub struct VirtualIndexNode {
 unsafe impl Send for VirtualIndexNode {}
 unsafe impl Sync for VirtualIndexNode {}
 impl VirtualIndexNode {
-    pub fn fs(&self) -> Arc<VirtualFileSystem> {
+    fn fs(&self) -> Arc<VirtualFileSystem> {
         self.fs
             .upgrade()
             .expect("Failed to upgrade weak reference to strong reference")
     }
 
+    fn inode(&self) -> Arc<dyn IndexNode> {
+        unsafe { (*self.inode.get()).clone().expect("Inode is not ready") }
+    }
+
     pub fn metadata(&self) -> Metadata {
-        self.inner_locked.lock().inode().metadata()
+        self.inode().metadata()
     }
 
     /// 列出当前目录下的所有文件
@@ -95,7 +100,7 @@ impl VirtualIndexNode {
     ///
     /// - 如果当前 inode 的类型不是目录，则 panic
     pub fn list(&self) -> Vec<(String, u64)> {
-        let inode = self.inner_locked.lock().inode();
+        let inode = self.inode();
         if inode.metadata().file_type != FileType::Directory {
             panic!("current inode is not a directory");
         }
@@ -112,21 +117,19 @@ impl Deref for VirtualIndexNode {
 }
 
 pub struct VirtualIndexNodeInner {
-    /// 如果当前 inode 正在初始化中，那么当前线程从 inner_locked 中
-    /// 拿 inode 会得到 None，此时需要带 inner_locked 在 condvar 上面
-    /// 等待
-    condvar: Condvar,
+    /// 当前 inode 是否已经准备好
+    ready: Completion,
     inner_locked: SpinMutex<VirtualIndexNodeInnerLocked>,
     /// 销毁线程开始进行销毁时需要拿到这个锁，确保同一 inode 同一时间只有
     /// 一个销毁线程在进行销毁
     destroying_lock: Mutex<()>,
     page_cache: PageCache,
     id: u64,
+    /// 如果当前 inode 正在初始化中，这里就是 None
+    inode: UnsafeCell<Option<Arc<dyn IndexNode>>>,
 }
 
 pub struct VirtualIndexNodeInnerLocked {
-    /// 如果当前 inode 正在初始化中，这里就是 None
-    inode: Option<Arc<dyn IndexNode>>,
     strong_count: usize,
     /// 是否要销毁这个 inode
     to_destroy: bool,
@@ -139,12 +142,6 @@ pub struct VirtualIndexNodeInnerLocked {
     /// inode 只有在持有 destroying_lock 锁的时候才能被修改。因此可以认为 destroying_lock
     /// 期间，in_cache 是不变的
     in_cache: bool,
-}
-
-impl VirtualIndexNodeInnerLocked {
-    pub fn inode(&self) -> Arc<dyn IndexNode> {
-        self.inode.clone().expect("Failed to get inode")
-    }
 }
 
 /// 以 `base` 为基准，查找 `path` 对应的 inode

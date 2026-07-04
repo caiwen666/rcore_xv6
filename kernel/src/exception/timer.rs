@@ -1,4 +1,4 @@
-use crate::process::{ProcessManager, cpu::CPUManager, timer::check_sleep_timer};
+use crate::process::{ProcessManager, cpu::CPUManager, sleep::check_sleep_timer};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 /// 时钟中断的间隔，单位为毫秒
@@ -6,6 +6,11 @@ pub const TIMER_INTERVAL: usize = 1;
 
 // 在 64 位架构上，usize 足以保证系统运行数万年也不会出现 jiffies 溢出
 pub static JIFFIES: AtomicUsize = AtomicUsize::new(0);
+
+#[inline]
+pub fn time_us() -> usize {
+    jiffies() * TIMER_INTERVAL * 1000
+}
 
 /// 时钟中断处理
 ///

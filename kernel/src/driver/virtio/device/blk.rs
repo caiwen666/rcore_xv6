@@ -4,9 +4,10 @@ use crate::{
         transport::Transport,
     },
     mm::{KERNEL_SPACE, address::VirtAddr},
-    sync::{condvar::Condvar, spin::SpinMutex},
+    process::sleep::{WaitQueue, Waiter, Waker},
+    sync::spin::SpinMutex,
 };
-use alloc::{boxed::Box, collections::btree_map::BTreeMap};
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
 use bitflags::bitflags;
 use core::mem::offset_of;
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
@@ -98,18 +99,13 @@ enum ReqType {
 
 pub struct VirtIOBlk<T: Transport> {
     transport: SpinMutex<T>,
-    // 我们约定使用 transport 时和 requests 时需要同时持有 queue 的锁
-    //
-    // 所以 transport 和 requests 的锁其实是没必要的
-    // transport 和 requests 上面还是要有锁是因为我们仍然希望能在不可变
-    // 引用 VirtIOBlk 的情况下可变引用 transport 和 requests
-    //
-    // 我们这么做的原因是 rust 的 borrow checker 有点难搞
     queue: SpinMutex<VirtQueue<{ QUEUE_SIZE as usize }>>,
-    condvar: Condvar,
-    requests: SpinMutex<BTreeMap<u16, Condvar>>,
+    /// 等待有可用描述符的队列
+    desc_wait_queue: WaitQueue,
     /// 磁盘的容量，单位为字节
     capacity: u64,
+    /// 等待完成的请求
+    pending_requests: SpinMutex<BTreeMap<u16, Arc<Waker>>>,
 }
 
 impl<T: Transport> VirtIOBlk<T> {
@@ -131,10 +127,10 @@ impl<T: Transport> VirtIOBlk<T> {
         let queue = VirtQueue::new(&mut transport, 0);
         transport.finish_init();
         Self {
-            transport: SpinMutex::new(transport, "VirtIOBlkTransport"),
-            queue: SpinMutex::new(queue, "VirtIOBlkQueue"),
-            condvar: Condvar::new(),
-            requests: SpinMutex::new(BTreeMap::new(), "VirtIOBlkRequests"),
+            transport: SpinMutex::new(transport, "virtio_blk_transport"),
+            queue: SpinMutex::new(queue, "virtio_blk_queue"),
+            desc_wait_queue: WaitQueue::new(),
+            pending_requests: SpinMutex::new(BTreeMap::new(), "virtio_blk_pending_requests"),
             capacity,
         }
     }
@@ -145,16 +141,23 @@ impl<T: Transport> VirtIOBlk<T> {
 
     /// 获取一个描述符，如果当前没有可用描述符则将当前线程挂起
     fn alloc_descriptor(&self) -> u16 {
-        let mut queue = self.queue.lock();
-        loop {
-            if let Some(desc_idx) = queue.alloc_descriptor() {
-                return desc_idx;
-            }
-            queue = self.condvar.wait(queue);
-        }
+        self.desc_wait_queue
+            .wait_until(
+                || {
+                    let mut queue = self.queue.lock();
+                    {
+                        let desc_idx = queue.alloc_descriptor()?;
+                        Some(desc_idx)
+                    }
+                },
+                false,
+            )
+            .unwrap()
     }
 
     /// 读取一个块的数据到 `buf` 中，并将当前线程挂起，直到数据读取完成
+    ///
+    /// **会堵塞**
     ///
     /// # Preconditions
     ///
@@ -166,7 +169,6 @@ impl<T: Transport> VirtIOBlk<T> {
     /// # Panics
     ///
     /// - `buf` 的长度必须为一个扇区大小，即 512 字节，否则会 panic
-    /// - 必须在线程中调用该函数，否则会 panic
     pub fn read_block(&self, block_id: usize, buf: &mut [u8]) {
         assert_ne!(buf.len(), 0);
         assert!(buf.len() == SECTOR_SIZE);
@@ -216,21 +218,11 @@ impl<T: Transport> VirtIOBlk<T> {
             ),
         );
 
-        // 发送请求前先拿锁，防止请求很快就完成了，但是我们还没睡眠，然后就睡死了
-        let mut requests = self.requests.lock();
+        let (waiter, waker) = Waiter::new_pair();
+        self.pending_requests.lock().insert(desc_idx1, waker);
         queue.request(desc_idx1, &mut *self.transport.lock());
-        // 在睡眠之前需要先释放 requests 的锁，但是我们还要用到里面的 condvar
-        // 所以这里将 request_condvar 泄露掉，同时强制对 requests 解锁
-        // 但此时我们还持有对 request_condvar 的引用，此时就会存在一个竞争
-        // 但我们现在仍持有 queue 锁，所以是安全的
-        unsafe {
-            requests.leak();
-        }
-        let request_condvar = requests.entry(desc_idx1).or_insert(Condvar::new());
-        unsafe { self.requests.unlock() };
-        // 我们后面用不到 queue，不需要再拿回锁
-        request_condvar.wait(queue);
-        // 后面我们被唤醒就说明请求已经完成了，所以不需要再进行额外判断
+        drop(queue);
+        let _ = waiter.wait(false);
 
         if status != 0 {
             panic!("VirtIOBlk: read block failed with status {}", status);
@@ -252,12 +244,10 @@ impl<T: Transport> VirtIOBlk<T> {
         // 但这是没坏处的。
         self.transport.lock().ack_interrupt();
         while let Some(desc_idx) = queue.recycle_descriptor() {
-            self.condvar.notify_all();
-            self.requests
-                .lock()
-                .get(&desc_idx)
-                .expect("VirtIOBlk: request not found")
-                .notify_all();
+            self.desc_wait_queue.wake_all();
+            let mut pending_requests = self.pending_requests.lock();
+            let waker = pending_requests.remove(&desc_idx).unwrap();
+            waker.wake();
         }
     }
 }
