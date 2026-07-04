@@ -109,7 +109,9 @@ impl ProcessManager {
     /// 该函数假设当前任务一定会被调度回来，所以该函数一定会返回。
     ///
     /// 如果你想要回到调度循环，并且永远不会调度回来，考虑直接调用 [IrqArch::switch_context]。
-    pub fn go_scheduler<'a>(mut current_task_inner: SpinMutexGuard<'a, TaskControlBlockInner>) {
+    pub fn go_scheduler<'a>(
+        mut current_task_inner: SpinMutexGuard<'a, TaskControlBlockInner>,
+    ) -> SpinMutexGuard<'a, TaskControlBlockInner> {
         // SAFETY: 当前正在对 current_task_inner 加锁，所以中断是关闭的
         let cpu = unsafe { CPUManager::current_cpu() };
         if core::hint::unlikely(cpu.spinning_state.count != 1) {
@@ -126,6 +128,7 @@ impl ProcessManager {
         // 这里需要重新获取当前 CPU 的引用，因为当前任务可能已经被调度到别的 CPU 上
         let cpu = unsafe { CPUManager::current_cpu() };
         cpu.spinning_state.interrupted = interrupted;
+        current_task_inner
     }
 
     /// 当前正在运行的任务主动让出去

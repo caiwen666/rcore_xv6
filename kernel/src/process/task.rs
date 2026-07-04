@@ -24,8 +24,8 @@ pub enum TaskStatus {
     Ready,
     /// 正在运行
     Running,
-    /// 正在堵塞
-    Blocked,
+    /// 正在堵塞，里面的 bool 表示是否可中断，true 为可中断
+    Blocked(bool),
 }
 
 pub struct TaskControlBlock {
@@ -48,6 +48,13 @@ pub struct TaskControlBlock {
 pub struct TaskControlBlockInner {
     pub status: TaskStatus,
     pub task_context: ArchTaskContext,
+    /// 是否收到了 kill 信号。
+    /// 收到该信号时，如果当前状态为 Block(true) 的话，则立刻唤醒当前线程，
+    /// 当前线程应立刻完成清理工作并退出。
+    /// 如果当前状态为 Block(false) 的话，线程会在完成系统调用之后，返回用户态之前退出。
+    ///
+    /// killed 信号一旦被加上就不可被撤销。
+    pub killed: bool,
 }
 
 impl TaskControlBlock {
@@ -88,6 +95,7 @@ impl TaskControlBlock {
                 TaskControlBlockInner {
                     status: TaskStatus::Ready,
                     task_context: ArchTaskContext::new(kstack_top),
+                    killed: false,
                 },
                 "task_control_block_inner",
             ),
@@ -172,6 +180,7 @@ impl TaskControlBlock {
                 TaskControlBlockInner {
                     status: TaskStatus::Ready,
                     task_context: ArchTaskContext::new(kstack_high),
+                    killed: false,
                 },
                 "task_control_block_inner",
             ),

@@ -1,25 +1,16 @@
 use core::{cmp::Ordering, time::Duration};
 
 use crate::{
-    exception::timer::{TIMER_INTERVAL, jiffies},
-    process::{
-        ProcessManager,
-        schedule::TaskScheduler,
-        task::{TaskControlBlock, TaskStatus},
-    },
+    exception::timer::time_us,
+    process::sleep::{Waiter, Waker},
     sync::spin::SpinMutex,
 };
 use alloc::{collections::binary_heap::BinaryHeap, sync::Arc};
 use lazy_static::lazy_static;
 
-#[inline]
-pub fn time_us() -> usize {
-    jiffies() * TIMER_INTERVAL * 1000
-}
-
 struct SleepTimer {
     expire_us: usize,
-    task: Arc<TaskControlBlock>,
+    waker: Arc<Waker>,
 }
 
 impl PartialEq for SleepTimer {
@@ -50,25 +41,25 @@ lazy_static! {
 ///
 /// - `expire_us`: 到期时间，单位为微秒
 ///
-/// # Preconditions
+/// # Panics
 ///
-/// 调用本函数时，不能持有自旋锁
-pub fn sleep_with_expire(expire_us: usize) {
-    // 没用 condvar 来做睡眠和唤醒
-    // 用 condvar 的话需要取 condvar 加入堆之后的引用来睡眠
-    // 而 BinaryHeap 不支持插入元素后返回元素在堆中引用
-    let current_task = ProcessManager::current_task();
+/// 调用本函数时，不能持有自旋锁，否则会 panic
+///
+/// # Returns
+///
+/// 如果完全睡完了，则返回 None，否则返回还剩多少时间没有睡眠
+pub fn sleep_with_expire(expire_us: usize) -> Option<Duration> {
+    let (waiter, waker) = Waiter::new_pair();
     let sleep_timer = SleepTimer {
         expire_us,
-        task: current_task.clone(),
+        waker: waker.clone(),
     };
-    let mut queue = SLEEP_TIMER_QUEUE.lock();
-    queue.push(sleep_timer);
-    let mut task_inner = current_task.lock();
-    // 拿到 task_inner 之后再释放 queue，防止我们还没完成睡眠就被唤醒了
-    drop(queue);
-    task_inner.status = TaskStatus::Blocked;
-    ProcessManager::go_scheduler(task_inner);
+    SLEEP_TIMER_QUEUE.lock().push(sleep_timer);
+    let _ = waiter.wait(true);
+    let now = time_us();
+    expire_us
+        .checked_sub(now)
+        .map(|us| Duration::from_micros(us as u64))
 }
 
 /// 休眠当前线程，直到过了 `interval` 之后唤醒
@@ -77,12 +68,13 @@ pub fn sleep_with_expire(expire_us: usize) {
 ///
 /// - 如果间隔时间转为微秒后超过 usize::MAX，则 panic
 /// - 如果当前系统的计时器时间加上间隔时间超过 usize::MAX，则 panic
+/// - 调用本函数时，不能持有自旋锁，否则会 panic
 ///
-/// # Preconditions
+/// # Returns
 ///
-/// 调用本函数时，不能持有自旋锁
+/// 如果完全睡完了，则返回 None，否则返回还剩多少时间没有睡眠
 #[inline]
-pub fn sleep_with_interval(interval: Duration) {
+pub fn sleep_with_interval(interval: Duration) -> Option<Duration> {
     assert!(
         interval.as_micros() <= usize::MAX as u128,
         "interval is too long"
@@ -92,18 +84,14 @@ pub fn sleep_with_interval(interval: Duration) {
         current_time
             .checked_add(interval.as_micros() as usize)
             .expect("interval is too long"),
-    );
+    )
 }
 
 pub fn check_sleep_timer() {
     let mut queue = SLEEP_TIMER_QUEUE.lock();
-    let current_time = time_us();
     while let Some(sleep_timer) = queue.peek() {
-        if sleep_timer.expire_us <= current_time {
-            let mut task_inner = sleep_timer.task.lock();
-            task_inner.status = TaskStatus::Ready;
-            TaskScheduler::push(sleep_timer.task.clone());
-            drop(task_inner);
+        if sleep_timer.expire_us <= time_us() {
+            sleep_timer.waker.wake();
             queue.pop();
         } else {
             break;

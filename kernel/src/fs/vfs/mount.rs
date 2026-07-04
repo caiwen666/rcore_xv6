@@ -40,7 +40,7 @@ impl VirtualIndexNode {
             panic!("current inode is not a directory");
         }
         let fs = self.fs();
-        let inode = self.inner_locked.lock().inode();
+        let inode = self.inode();
         if let Some(parent_inode_id) = inode.parent() {
             Some(fs.get_inode_with_cache(parent_inode_id))
         } else {
@@ -65,7 +65,7 @@ impl VirtualIndexNode {
             "current inode is not a directory"
         );
         let fs = self.fs();
-        let inode = self.inner_locked.lock().inode();
+        let inode = self.inode();
         if let Some(parent_inode_id) = inode.parent() {
             let parent_inode = fs.get_inode_with_cache(parent_inode_id);
             // TODO 需要优化

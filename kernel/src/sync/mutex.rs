@@ -1,6 +1,6 @@
 use crate::{
-    process::ProcessManager,
-    sync::{condvar::Condvar, spin::SpinMutex},
+    process::{ProcessManager, sleep::WaitQueue},
+    sync::spin::SpinMutex,
 };
 use core::{
     cell::UnsafeCell,
@@ -12,7 +12,7 @@ pub struct Mutex<T: ?Sized> {
     /// 锁的名称，用于死锁检测时显示
     name: &'static str,
     inner: SpinMutex<MutexInner>,
-    condvar: Condvar,
+    wait_queue: WaitQueue,
     data: UnsafeCell<T>,
 }
 
@@ -46,29 +46,37 @@ impl<T> Mutex<T> {
                 name,
             ),
             data: UnsafeCell::new(inner),
-            condvar: Condvar::new(),
+            wait_queue: WaitQueue::new(),
         }
     }
 }
 
 impl<T: ?Sized> Mutex<T> {
     pub fn lock(&self) -> MutexGuard<'_, T> {
-        let mut inner = self.inner.lock();
-        while inner.locked {
-            let (owner_pid, owner_tid) = inner.owner.expect("Mutex is locked but no owner");
-            let current_task = ProcessManager::current_task();
-            if current_task.id == owner_tid && current_task.process().pid == owner_pid {
-                panic!(
-                    "deadlock detected: {} is locked by the same task, pid: {}, tid: {}",
-                    self.name, owner_pid, owner_tid
-                );
-            }
-            inner = self.condvar.wait(inner);
-        }
-        inner.locked = true;
-        let current_task = ProcessManager::current_task();
-        inner.owner = Some((current_task.process().pid, current_task.id));
-        MutexGuard { mutex: self }
+        self.wait_queue
+            .wait_until(
+                || {
+                    let mut inner = self.inner.lock();
+                    if inner.locked {
+                        let (owner_pid, owner_tid) = inner.owner.expect("Mutex is locked but no owner");
+                        let current_task = ProcessManager::current_task();
+                        if current_task.id == owner_tid && current_task.process().pid == owner_pid {
+                            panic!(
+                                "deadlock detected: {} is locked by the same task, pid: {}, tid: {}",
+                                self.name, owner_pid, owner_tid
+                            );
+                        }
+                        None
+                    } else {
+                        inner.locked = true;
+                        let current_task = ProcessManager::current_task();
+                        inner.owner = Some((current_task.process().pid, current_task.id));
+                        Some(MutexGuard { mutex: self })
+                    }
+                },
+                false,
+            )
+            .unwrap()
     }
 
     fn unlock(&self) {
@@ -80,7 +88,7 @@ impl<T: ?Sized> Mutex<T> {
         }
         inner.owner = None;
         inner.locked = false;
-        self.condvar.notify_all();
+        self.wait_queue.wake_all();
     }
 }
 
