@@ -3,7 +3,7 @@ use alloc::sync::Arc;
 use crate::{
     console::{Stdin, Stdout},
     error::SystemError,
-    fs::vfs::{VirtualFile, VirtualIndexNode, lookup},
+    fs::vfs::{VirtualFile, lookup},
     process::ProcessControlBlock,
 };
 
@@ -42,6 +42,6 @@ impl ProcessControlBlock {
     /// **该函数会对 inner 加锁**
     pub fn get_file(&self, fd: u64) -> Option<Arc<dyn File>> {
         let inner = self.inner();
-        inner.fd_table.get(fd as usize).map(|f| f.clone())
+        inner.fd_table.get(fd as usize).cloned()
     }
 }

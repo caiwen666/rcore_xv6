@@ -125,26 +125,26 @@ unsafe extern "C" fn user_trap_handler() {
                     }
                 } else {
                     println!(
-                        "pid:{}, tid:{}\nsyscall_id:\t{:?}",
+                        "Unresolved Syscall. The thread has been killed.\nprocess_id: {}\nthread_id: {}\nsyscall_id: {}",
                         current_task.process().pid,
                         current_task.id,
                         syscall_id
                     );
-                    panic!("Unresolved Syscall.")
+                    current_task.lock().killed = true;
                 }
             }
             exception => {
                 let reg_sepc = sepc::read();
                 let reg_stval = stval::read();
                 println!(
-                    "pid:{}, tid:{}\nscause:\t{:?}\nsepc:\t0x{:x}\nstval:\t0x{:x}",
+                    "Unresolved Exception. The thread has been killed.\nprocess_id: {}\nthread_id: {}\nscause: {:?}\nsepc: 0x{:x}\nstval: 0x{:x}",
                     current_task.process().pid,
                     current_task.id,
                     exception,
                     reg_sepc,
                     reg_stval
                 );
-                panic!("Unresolved Exception.")
+                current_task.lock().killed = true;
             }
         },
         scause::Trap::Interrupt(code) => match Interrupt::from(code) {
@@ -161,18 +161,26 @@ unsafe extern "C" fn user_trap_handler() {
                 let reg_sepc = sepc::read();
                 let reg_stval = stval::read();
                 println!(
-                    "pid:{}, tid:{}\nscause:\t{:?}\nsepc:\t0x{:x}\nstval:\t0x{:x}",
+                    "Unresolved Interrupt. The thread has been killed.\tprocess_id: {}\nthread_id: {}\nscause: {:?}\nsepc: 0x{:x}\nstval: 0x{:x}",
                     current_task.process().pid,
                     current_task.id,
                     interrupt,
                     reg_sepc,
                     reg_stval
                 );
-                panic!("Unresolved Interrupt.")
+                current_task.lock().killed = true;
             }
         },
     }
 
+    // 判断当前线程是否被杀死了，是的话就退出线程
+    let is_killed = current_task.lock().killed;
+    // 无论是否被杀死，都 drop 掉，因为后面都不会返回了
     drop(current_task);
-    RiscV64InterruptArch::return_to_user();
+
+    if is_killed {
+        ProcessManager::exit()
+    } else {
+        RiscV64InterruptArch::return_to_user();
+    }
 }

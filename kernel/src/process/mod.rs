@@ -4,12 +4,12 @@ pub mod kthread;
 pub mod mm;
 pub mod schedule;
 pub mod sleep;
+mod syscall;
 pub mod task;
-
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
     arch::{IrqArch, MMArch},
+    driver::{self, sifive_test::ShutdownReason},
     exception::InterruptArch,
     fs::{
         ROOT_FS,
@@ -17,19 +17,25 @@ use crate::{
         vfs::{VirtualIndexNode, lookup},
     },
     mm::{MemoryManagementArch, address::VirtAddr, mem_space::MemorySpace},
-    process::{cpu::CPUManager, schedule::TaskScheduler, task::TaskControlBlock},
+    println,
+    process::{
+        cpu::CPUManager, kthread::spawn_kthread, schedule::TaskScheduler, task::TaskControlBlock,
+    },
     sync::spin::{SpinMutex, SpinMutexGuard},
     utils::RecycleAllocator,
 };
 use alloc::{
+    collections::btree_map::BTreeMap,
     sync::{Arc, Weak},
-    vec::Vec,
 };
+use core::sync::atomic::{AtomicUsize, Ordering};
 use lazy_static::lazy_static;
 use xmas_elf::{ElfFile, program::Type};
 
 lazy_static! {
     static ref KERNEL_PROCESS: Arc<ProcessControlBlock> = ProcessManager::init_kernel_process();
+    static ref PROCESS_TABLE: SpinMutex<BTreeMap<usize, Weak<ProcessControlBlock>>> =
+        SpinMutex::new(BTreeMap::new(), "process_table");
 }
 static PID_ALLOCATOR: AtomicUsize = AtomicUsize::new(1);
 
@@ -56,6 +62,9 @@ impl ProcessManager {
                     cwd: None,
                     fd_table: RecycleAllocator::new(),
                     heap_size: 0,
+                    parent: None,
+                    children: BTreeMap::new(),
+                    exited_children: BTreeMap::new(),
                 },
                 "kernel_process_inner",
             ),
@@ -116,6 +125,9 @@ impl ProcessManager {
                     cwd: Some(cwd),
                     fd_table: RecycleAllocator::new(),
                     heap_size: 0,
+                    parent: None,
+                    children: BTreeMap::new(),
+                    exited_children: BTreeMap::new(),
                 },
                 "process_inner",
             ),
@@ -130,16 +142,20 @@ impl ProcessManager {
         );
 
         TaskScheduler::push(task);
+        PROCESS_TABLE
+            .lock()
+            .insert(process.pid, Arc::downgrade(&process));
         process
     }
 }
 
-/// 进程基本信息
+/// ProcessControlBlock(PCB)
 ///
-/// - 全局进程列表、父进程、进程下的所有线程的 TCB，这些会持有 PCB 的强引用
-/// - 子进程 会持有 PCB 的弱引用
+/// PCB 放在堆上面，其强引用只会出现在如下几个地方：
 ///
-/// 当进程结束时，PCB 仍存在引用计数，不会被释放，直到父进程将其回收
+/// - 进程包含的线程
+/// - 父进程
+/// - 子进程
 pub struct ProcessControlBlock {
     pub pid: usize,
     /// 进程需要的 tls 区域的大小，按页大小对齐
@@ -150,12 +166,20 @@ pub struct ProcessControlBlock {
 pub enum ProcessStatus {
     /// 正在运行
     Running,
-    /// 已经有线程将进程退出
-    Exiting,
+    /// 已经有线程将进程退出，u8 为退出代码
+    Exiting(u8),
 }
 
 pub struct ProcessControlBlockInner {
     pub status: ProcessStatus,
+    /// 父进程，孤儿进程为 None
+    pub parent: Option<Arc<ProcessControlBlock>>,
+    /// 子进程列表
+    pub children: BTreeMap<usize, Arc<ProcessControlBlock>>,
+    /// 子进程退出时，会将其 pid 和退出状态保存到这里，等待父进程回收
+    ///
+    /// map 的 key 为子进程的 pid，value 为子进程的退出代码
+    pub exited_children: BTreeMap<usize, u8>,
     /// 如果是内核进程，则该字段为 None
     pub memory_space: Option<MemorySpace>,
     pub tasks: RecycleAllocator<Weak<TaskControlBlock>>,
@@ -181,5 +205,31 @@ impl ProcessControlBlock {
     pub fn set_cwd(&self, cwd: VirtualIndexNode) {
         let mut inner = self.inner();
         inner.cwd = Some(cwd);
+    }
+}
+
+impl Drop for ProcessControlBlock {
+    fn drop(&mut self) {
+        let mut inner = PROCESS_TABLE.lock();
+        inner.remove(&self.pid);
+        // 所有进程都退出的话，启动一个内核线程，负责退出整个系统
+        if inner.is_empty() {
+            spawn_kthread(|| {
+                println!(
+                    "[kernel] All processes have exited, waiting for all kernel threads to exit..."
+                );
+                loop {
+                    // 循环检查是否还有内核线程在运行
+                    let inner = KERNEL_PROCESS.inner();
+                    if inner.tasks.len() == 1 {
+                        // 就剩当前这个内核线程了，关机
+                        println!("[kernel] All kernel threads have exited, shutting down...");
+                        driver::SIFIVE_TEST.shutdown(ShutdownReason::Normal, 0);
+                    }
+                    drop(inner);
+                    ProcessManager::yield_current();
+                }
+            });
+        }
     }
 }

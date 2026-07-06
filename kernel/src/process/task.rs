@@ -6,7 +6,7 @@ use crate::{
         mem_space::{MemoryArea, MemoryAreaType, MemoryPermission},
     },
     process::{
-        KERNEL_PROCESS, ProcessControlBlock,
+        KERNEL_PROCESS, ProcessControlBlock, ProcessStatus,
         context::{
             ArchTaskContext, ArchTrapContext, TRAP_CONTEXT_PAGE_COUNT, TaskContext, TrapContext,
         },
@@ -27,6 +27,17 @@ pub enum TaskStatus {
     Blocked(bool),
 }
 
+/// TaskControlBlock(TCB)
+///
+/// TCB 放在堆上面，其强引用只会出现在如下几个地方：
+///
+/// - 正在运行的 task 的栈上
+/// - 调度队列
+/// - CPU
+///
+/// 其他地方应保存 TCB 的弱引用。
+///
+/// 这确保任务只要还活着就必然存在一个强引用指向它。强引用归零时，任务必然结束并被回收。
 pub struct TaskControlBlock {
     process: Arc<ProcessControlBlock>,
     #[expect(unused)]
@@ -184,12 +195,46 @@ impl TaskControlBlock {
 }
 
 impl Drop for TaskControlBlock {
+    // 最后一个引用计数应该是在调度循环中归零的。调用 drop 时不持有任何锁。
     fn drop(&mut self) {
         // 归还 tid
         let mut inner = self.process.inner();
         inner.tasks.pop(self.id);
-        if inner.tasks.len() == 0 {
-            // TODO 最后一个线程负责退出整个进程
+        if inner.tasks.len() == 0 && self.process.pid != KERNEL_PROCESS.pid {
+            // 最后一个线程负责退出整个进程（内核线程除外）
+            let code = match inner.status {
+                ProcessStatus::Exiting(code) => code,
+                _ => 0,
+            };
+            // 将子进程指向当前进程的 PCB 引用和当前进程指向子进程的引用砍掉
+            for child in inner.children.values() {
+                let mut child_inner = child.inner();
+                child_inner.parent = None;
+            }
+            inner.children.clear();
+            // 对父进程加锁时要格外小心，因为容易出现子进程持有自己的锁，要对父进程加锁，
+            // 而父进程也持有自己的锁，要对子进程加锁，这就形成了死锁
+            // 我们统一按先父后子的顺序进行加锁
+            // 这里先取当前子进程的父进程PCB，同时将当前进程到父进程的引用砍掉
+            let Some(origin_parent) = inner.parent.take() else {
+                // 说明当前进程已经是孤儿进程了
+                return;
+            };
+            drop(inner);
+            // 再分别对父进程和子进程加锁，锁序转变为先父后子
+            let mut parent_inner = origin_parent.inner();
+            // 从 drop(inner) 到这里再对 inner 加锁，这个窗口，有可能 origin_parent 已经不是当前进程的父进程了
+            // 所以我们需要复查一下
+            let mut inner = self.process.inner();
+            if !parent_inner.children.contains_key(&self.process.pid) {
+                // 说明当前进程已经不是父进程的子进程了
+                // 同时也说明当前进程是一个孤儿进程了
+                return;
+            }
+            parent_inner.exited_children.insert(self.process.pid, code);
+            // 砍掉当前进程到父进程和父进程到当前进程的引用
+            parent_inner.children.remove(&self.process.pid);
+            inner.parent = None;
         }
     }
 }

@@ -17,11 +17,7 @@ fn sys_write(args: [usize; 6]) -> Result<usize, SystemError> {
     }
     let process = ProcessManager::current_process();
     let inner = process.inner();
-    let file = inner
-        .fd_table
-        .get(fd)
-        .map(|f| f.clone())
-        .ok_or(SystemError::EBADF)?;
+    let file = inner.fd_table.get(fd).cloned().ok_or(SystemError::EBADF)?;
     let memory_space = inner.memory_space.as_ref().unwrap();
     let permission = memory_space.check_permission(buf, buf + len)?;
     if !permission.contains(MemoryPermission::UserAccessible)

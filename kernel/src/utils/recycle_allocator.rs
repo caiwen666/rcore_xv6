@@ -38,10 +38,18 @@ impl<T> RecycleAllocator<T> {
     }
     /// 从分配器中移除元素
     ///
+    /// # Panics
+    ///
+    /// 如果对应 id 的元素不存在，则 panic
+    ///
     /// # Returns
     ///
     /// 如果对应 id 的元素不存在，则返回 None
     pub fn pop(&mut self, id: usize) -> Option<T> {
+        if core::hint::unlikely(id >= self.items.len() || self.items[id].is_none()) {
+            panic!("RecycleAllocator: id {} is out of range!", id);
+        }
+        self.recycled.insert(id);
         self.items.get_mut(id).and_then(|item| item.take())
     }
     /// 获取对应 id 的元素
@@ -57,15 +65,22 @@ impl<T> RecycleAllocator<T> {
     /// # Returns
     ///
     /// 如果对应 id 的元素不存在，则返回 None
+    #[expect(unused)]
     pub fn get_mut(&mut self, id: usize) -> Option<&mut T> {
         self.items.get_mut(id).and_then(|item| item.as_mut())
     }
     /// 获取下一个将被分配的 id
     pub fn next_id(&self) -> usize {
-        self.recycled.first().map(|v| *v).unwrap_or(self.current)
+        self.recycled.first().copied().unwrap_or(self.current)
     }
     /// 当前分配器中元素的数量
     pub fn len(&self) -> usize {
         self.current - self.recycled.len()
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (usize, &T)> {
+        self.items
+            .iter()
+            .enumerate()
+            .filter_map(|(id, item)| item.as_ref().map(|v| (id, v)))
     }
 }

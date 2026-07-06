@@ -20,11 +20,7 @@ fn sys_read(args: [usize; 6]) -> Result<usize, SystemError> {
     }
     let process = ProcessManager::current_process();
     let inner = process.inner();
-    let file = inner
-        .fd_table
-        .get(fd)
-        .map(|f| f.clone())
-        .ok_or(SystemError::EBADF)?;
+    let file = inner.fd_table.get(fd).cloned().ok_or(SystemError::EBADF)?;
 
     let check = |memory_space: &MemorySpace| {
         let permission = memory_space.check_permission(buf, buf + len)?;
