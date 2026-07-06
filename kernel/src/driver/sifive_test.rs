@@ -13,7 +13,6 @@ pub enum ShutdownReason {
     /// 异常关机
     Failure,
     /// 正常关机
-    #[expect(unused)]
     Normal,
 }
 

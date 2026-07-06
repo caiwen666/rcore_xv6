@@ -124,13 +124,13 @@ impl Waiter {
             let mut task_inner = current_task.lock();
             drop(waker_state);
             // 说明还没睡就被 kill 了
-            if task_inner.killed {
+            if interruptible && task_inner.killed {
                 return Err(SystemError::EINTR);
             }
             task_inner.status = TaskStatus::Blocked(interruptible);
             task_inner = ProcessManager::go_scheduler(task_inner);
             // 因为被 kill 而唤醒
-            if task_inner.killed {
+            if interruptible && task_inner.killed {
                 return Err(SystemError::EINTR);
             }
         }

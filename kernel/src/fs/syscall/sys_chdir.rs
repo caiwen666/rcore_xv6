@@ -12,10 +12,9 @@ fn sys_chdir(args: [usize; 6]) -> Result<usize, SystemError> {
     const MAXPATH: usize = 128;
     let path_addr = VirtAddr::new(args[0]);
 
-    let task = ProcessManager::current_task();
-    let resource = task.process_resource();
-    let resource_guard = resource.lock();
-    let memory_space = resource_guard.memory_space.as_ref().unwrap();
+    let process = ProcessManager::current_process();
+    let inner = process.inner();
+    let memory_space = inner.memory_space.as_ref().unwrap();
     let path = memory_space.copyin_str(path_addr, MAXPATH)?;
     if path.is_empty() {
         return Err(SystemError::EINVAL);
@@ -26,14 +25,14 @@ fn sys_chdir(args: [usize; 6]) -> Result<usize, SystemError> {
     {
         return Err(SystemError::EFAULT);
     }
-    drop(resource_guard);
+    drop(inner);
 
-    let cwd = resource.cwd();
+    let cwd = process.cwd();
     let inode = lookup(cwd, path.as_str()).ok_or(SystemError::ENOENT)?;
     if inode.metadata().file_type != FileType::Directory {
         return Err(SystemError::ENOTDIR);
     }
-    let mut resource_guard = resource.lock();
-    resource_guard.cwd.replace(inode);
+    let mut inner = process.inner();
+    inner.cwd.replace(inode);
     Ok(0)
 }

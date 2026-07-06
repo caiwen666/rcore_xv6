@@ -1,4 +1,5 @@
 #include "../string.h"
+#include "../sys/process.h"
 #include "../types.h"
 
 extern int main(void);
@@ -29,8 +30,6 @@ static void __tls_init(void) {
 __attribute__((section(".text.entry"))) __attribute__((used)) void
 _start(void) {
   __tls_init();
-  main();
-
-  // 故意触发一个特权级指令，让内核 panic
-  __asm__ volatile("wfi");
+  int ret = main();
+  exit(ret);
 }

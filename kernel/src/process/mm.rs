@@ -39,14 +39,14 @@ impl Drop for KernelStack {
     fn drop(&mut self) {
         let (base_vaddr, _) = self.range();
         let mut allocator = KERNEL_STACK_ALLOCATOR.lock();
-        allocator.dealloc(self.id);
+        allocator.pop(self.id);
         // 内存释放完毕才删除内存区域
         KERNEL_SPACE.lock().remove(base_vaddr);
     }
 }
 
 lazy_static! {
-    static ref KERNEL_STACK_ALLOCATOR: SpinMutex<RecycleAllocator> =
+    static ref KERNEL_STACK_ALLOCATOR: SpinMutex<RecycleAllocator<()>> =
         SpinMutex::new(RecycleAllocator::new(), "kernel_stack_allocator");
 }
 
@@ -54,7 +54,7 @@ pub struct KernelStackAllocator;
 
 impl KernelStackAllocator {
     pub fn alloc() -> KernelStack {
-        let id = KERNEL_STACK_ALLOCATOR.lock().alloc();
+        let id = KERNEL_STACK_ALLOCATOR.lock().push(());
         let res = KernelStack { id };
         let (base_vaddr, _) = res.range();
         let area = MemoryArea::new(

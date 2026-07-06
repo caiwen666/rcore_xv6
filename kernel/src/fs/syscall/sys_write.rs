@@ -15,15 +15,10 @@ fn sys_write(args: [usize; 6]) -> Result<usize, SystemError> {
     if len == 0 {
         return Ok(0);
     }
-    let task = ProcessManager::current_task();
-    let resource = task.process_resource();
-    let resource_guard = resource.lock();
-    let file = resource_guard
-        .fd_table
-        .get(fd)
-        .and_then(|f| f.as_ref().cloned())
-        .ok_or(SystemError::EBADF)?;
-    let memory_space = resource_guard.memory_space.as_ref().unwrap();
+    let process = ProcessManager::current_process();
+    let inner = process.inner();
+    let file = inner.fd_table.get(fd).cloned().ok_or(SystemError::EBADF)?;
+    let memory_space = inner.memory_space.as_ref().unwrap();
     let permission = memory_space.check_permission(buf, buf + len)?;
     if !permission.contains(MemoryPermission::UserAccessible)
         || !permission.contains(MemoryPermission::Readable)
@@ -32,6 +27,6 @@ fn sys_write(args: [usize; 6]) -> Result<usize, SystemError> {
     }
     let mut kernel_buf = vec![0; len];
     memory_space.copyin(buf, &mut kernel_buf);
-    drop(resource_guard);
+    drop(inner);
     file.write(&kernel_buf)
 }

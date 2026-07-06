@@ -9,7 +9,7 @@ use crate::{
     },
     exception::{InterruptArch, timer::TIMER_INTERVAL},
     mm::{MemoryManagementArch, address::VirtAddr},
-    process::cpu::CPUManager,
+    process::{ProcessManager, cpu::CPUManager},
 };
 use core::sync::atomic::AtomicUsize;
 use riscv::register::{mie, mscratch, mstatus, mtvec, satp::Satp, sstatus, stvec};
@@ -86,10 +86,9 @@ impl InterruptArch for RiscV64InterruptArch {
         let satp;
         // 涉及的资源有点多，直接用一个代码块包裹，不用再一个个 drop 了
         {
-            let current_task = cpu.current_task.as_ref().cloned().unwrap();
-            let process_resource = current_task.process_resource();
-            let process_resource_lock = process_resource.lock();
-            let memory_space = process_resource_lock.memory_space.as_ref().unwrap();
+            let process = ProcessManager::current_process();
+            let inner = process.inner();
+            let memory_space = inner.memory_space.as_ref().unwrap();
             satp = make_satp(memory_space);
         }
 

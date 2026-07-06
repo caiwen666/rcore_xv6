@@ -15,10 +15,9 @@ fn sys_getcwd(args: [usize; 6]) -> Result<usize, SystemError> {
         return Err(SystemError::EINVAL);
     }
 
-    let task = ProcessManager::current_task();
-    let resource = task.process_resource();
+    let process = ProcessManager::current_process();
 
-    let mut inode = resource.cwd();
+    let mut inode = process.cwd();
     let mut path_inode = Vec::new();
     path_inode.push(inode.clone());
     while let Some(parent_inode) = inode.parent() {
@@ -39,8 +38,8 @@ fn sys_getcwd(args: [usize; 6]) -> Result<usize, SystemError> {
         return Err(SystemError::ERANGE);
     }
 
-    let resource_guard = resource.lock();
-    let memory_space = resource_guard.memory_space.as_ref().unwrap();
+    let inner = process.inner();
+    let memory_space = inner.memory_space.as_ref().unwrap();
     let permission = memory_space.check_permission(path_addr, path_addr + path.len() + 1)?;
     if !permission.contains(MemoryPermission::UserAccessible)
         || !permission.contains(MemoryPermission::Writable)

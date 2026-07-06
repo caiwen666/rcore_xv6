@@ -13,6 +13,7 @@
 #define SYS_CHDIR 2
 #define SYS_SBRK 3
 #define SYS_GETCWD 4
+#define SYS_EXIT 5
 
 isize syscall0(usize id);
 isize syscall1(usize id, usize arg0);
