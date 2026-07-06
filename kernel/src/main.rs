@@ -84,7 +84,7 @@ pub fn kthread_main() {
     logo.read_at(0, &mut logo_buf);
     println!("{}", String::from_utf8_lossy(logo_buf.as_slice()));
     // 设置内核进程的工作目录
-    let process = ProcessManager::current_resource();
+    let process = ProcessManager::current_process();
     process.set_cwd(ROOT_FS.root());
 
     // 初始化块设备

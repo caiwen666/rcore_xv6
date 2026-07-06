@@ -6,8 +6,7 @@ use crate::{
         mem_space::{MemoryArea, MemoryAreaType, MemoryPermission},
     },
     process::{
-        KERNEL_PROCESS, KERNEL_PROCESS_RESOURCE, ProcessControlBlock, ProcessResource,
-        ProcessStatus,
+        KERNEL_PROCESS, ProcessControlBlock,
         context::{
             ArchTaskContext, ArchTrapContext, TRAP_CONTEXT_PAGE_COUNT, TaskContext, TrapContext,
         },
@@ -30,7 +29,6 @@ pub enum TaskStatus {
 
 pub struct TaskControlBlock {
     process: Arc<ProcessControlBlock>,
-    process_resource: Arc<SpinMutex<ProcessResource>>,
     #[expect(unused)]
     kstack: KernelStack,
     pub id: usize,
@@ -70,10 +68,6 @@ impl TaskControlBlock {
         self.process.clone()
     }
 
-    pub fn process_resource(&self) -> Arc<SpinMutex<ProcessResource>> {
-        self.process_resource.clone()
-    }
-
     pub fn trap_context(&self) -> &mut ArchTrapContext {
         self.trap_context_paddr.unwrap().get_mut()
     }
@@ -83,10 +77,9 @@ impl TaskControlBlock {
     pub fn new_kthread(entry: KthreadEntryCell) -> Arc<Self> {
         let kstack = KernelStackAllocator::alloc();
         let (_, kstack_top) = kstack.range();
-        let mut resource = KERNEL_PROCESS_RESOURCE.lock();
-        let id = resource.avail_task_id.alloc();
+        let mut inner = KERNEL_PROCESS.inner();
+        let id = inner.avail_task_id.alloc();
         let task = Arc::new(Self {
-            process_resource: KERNEL_PROCESS_RESOURCE.clone(),
             process: KERNEL_PROCESS.clone(),
             kstack,
             id,
@@ -101,28 +94,24 @@ impl TaskControlBlock {
             ),
             trap_context_paddr: None,
         });
-        if id >= resource.tasks.len() {
-            resource.tasks.push(Some(Arc::downgrade(&task)));
+        if id >= inner.tasks.len() {
+            inner.tasks.push(Some(Arc::downgrade(&task)));
         } else {
-            resource.tasks[id] = Some(Arc::downgrade(&task));
+            inner.tasks[id] = Some(Arc::downgrade(&task));
         }
         task
     }
 
     /// 在指定进程下创建线程。线程的默认状态为 [TaskStatus::Ready]。不会自动将线程加入调度器。
-    pub fn new(
-        process: Arc<ProcessControlBlock>,
-        process_resource: Arc<SpinMutex<ProcessResource>>,
-        entry: VirtAddr,
-    ) -> Arc<Self> {
+    pub fn new(process: Arc<ProcessControlBlock>, entry: VirtAddr) -> Arc<Self> {
         let kstack = KernelStackAllocator::alloc();
         let (_, kstack_high) = kstack.range();
 
-        let mut resource = process_resource.lock();
-        let id = resource.avail_task_id.alloc();
+        let mut inner = process.inner();
+        let id = inner.avail_task_id.alloc();
         // 分配用户栈
         let (ustack_low, ustack_high) = process.ustack_vaddr(id);
-        let memory_space = resource.memory_space.as_mut().unwrap();
+        let memory_space = inner.memory_space.as_mut().unwrap();
         memory_space.push(MemoryArea::new(
             ustack_low,
             ustack_high - ustack_low,
@@ -171,8 +160,7 @@ impl TaskControlBlock {
             .unwrap();
 
         let task = Arc::new(Self {
-            process,
-            process_resource: process_resource.clone(),
+            process: process.clone(),
             kstack,
             id,
             kthread_entry: KthreadEntryCell::empty(),
@@ -193,10 +181,10 @@ impl TaskControlBlock {
             .set_pc(entry)
             .set_tls_base(tls_base);
 
-        if id >= resource.tasks.len() {
-            resource.tasks.push(Some(Arc::downgrade(&task)));
+        if id >= inner.tasks.len() {
+            inner.tasks.push(Some(Arc::downgrade(&task)));
         } else {
-            resource.tasks[id] = Some(Arc::downgrade(&task));
+            inner.tasks[id] = Some(Arc::downgrade(&task));
         }
 
         task
@@ -206,14 +194,10 @@ impl TaskControlBlock {
 impl Drop for TaskControlBlock {
     fn drop(&mut self) {
         // 归还 tid
-        let mut resource = self.process_resource.lock();
-        resource.avail_task_id.dealloc(self.id);
-        resource.tasks[self.id] = None;
+        let mut inner = self.process.inner();
+        inner.avail_task_id.dealloc(self.id);
+        inner.tasks[self.id] = None;
         // 是否为最后一个线程，是的话就去标记这个进程已经结束
-        // 内核进程除外
-        if resource.avail_task_id.count() == 0 && self.process.pid != 0 {
-            let mut process_inner = self.process.inner();
-            process_inner.status = ProcessStatus::Zombie(0);
-        }
+        // TODO
     }
 }

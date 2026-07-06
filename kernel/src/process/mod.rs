@@ -30,8 +30,6 @@ use xmas_elf::{ElfFile, program::Type};
 
 lazy_static! {
     static ref KERNEL_PROCESS: Arc<ProcessControlBlock> = ProcessManager::init_kernel_process();
-    static ref KERNEL_PROCESS_RESOURCE: Arc<SpinMutex<ProcessResource>> =
-        ProcessManager::init_kernel_process_resource();
 }
 static PID_ALLOCATOR: AtomicUsize = AtomicUsize::new(1);
 
@@ -53,26 +51,17 @@ impl ProcessManager {
             inner: SpinMutex::new(
                 ProcessControlBlockInner {
                     status: ProcessStatus::Running,
+                    memory_space: None,
+                    tasks: Vec::new(),
+                    avail_task_id: RecycleAllocator::new(),
+                    cwd: None,
+                    fd_table: Vec::new(),
+                    avail_fd: RecycleAllocator::new(),
+                    heap_size: 0,
                 },
                 "kernel_process_inner",
             ),
         })
-    }
-
-    /// 初始化内核进程资源
-    fn init_kernel_process_resource() -> Arc<SpinMutex<ProcessResource>> {
-        Arc::new(SpinMutex::new(
-            ProcessResource {
-                memory_space: None,
-                tasks: Vec::new(),
-                avail_task_id: RecycleAllocator::new(),
-                cwd: None,
-                fd_table: Vec::new(),
-                avail_fd: RecycleAllocator::new(),
-                heap_size: 0,
-            },
-            "kernel_process_resource",
-        ))
     }
 }
 
@@ -100,12 +89,6 @@ impl ProcessManager {
         let task = Self::current_task();
         task.process().clone()
     }
-
-    /// 获取当前进程资源
-    pub fn current_resource() -> Arc<SpinMutex<ProcessResource>> {
-        let task = Self::current_task();
-        task.process_resource().clone()
-    }
 }
 
 impl ProcessManager {
@@ -118,44 +101,36 @@ impl ProcessManager {
         let elf =
             ElfFile::new(elf_data).unwrap_or_else(|e| panic!("Failed to parse elf file: {}", e));
         let memory_space = MemorySpace::from_elf(&elf);
-
         // 解析 tls
         let tls_size = elf
             .program_iter()
             .find(|ph| ph.get_type().unwrap() == Type::Tls)
             .map(|ph| (ph.mem_size() as usize).div_ceil(MMArch::PAGE_SIZE) * MMArch::PAGE_SIZE);
-
+        // 默认把工作目录设在 /root
+        let cwd = lookup(ROOT_FS.root(), "root").unwrap();
         let process = Arc::new(ProcessControlBlock {
             pid: PID_ALLOCATOR.fetch_add(1, Ordering::Relaxed),
             tls_size,
             inner: SpinMutex::new(
                 ProcessControlBlockInner {
                     status: ProcessStatus::Running,
+                    memory_space: Some(memory_space),
+                    tasks: Vec::new(),
+                    avail_task_id: RecycleAllocator::new(),
+                    cwd: Some(cwd),
+                    fd_table: Vec::new(),
+                    avail_fd: RecycleAllocator::new(),
+                    heap_size: 0,
                 },
                 "process_inner",
             ),
         });
-        // 默认把工作目录设在 /root
-        let cwd = lookup(ROOT_FS.root(), "root").unwrap();
-        let process_resource = Arc::new(SpinMutex::new(
-            ProcessResource {
-                memory_space: Some(memory_space),
-                tasks: Vec::new(),
-                avail_task_id: RecycleAllocator::new(),
-                cwd: Some(cwd),
-                fd_table: Vec::new(),
-                avail_fd: RecycleAllocator::new(),
-                heap_size: 0,
-            },
-            "process_resource",
-        ));
-        process_resource.open_file("stdin");
-        process_resource.open_file("stdout");
+        process.open_file("stdin");
+        process.open_file("stdout");
         // 标准错误流沿用标准输出
-        process_resource.open_file("stdout");
+        process.open_file("stdout");
         let task = TaskControlBlock::new(
             process.clone(),
-            process_resource,
             VirtAddr::new(elf.header.pt2.entry_point() as usize),
         );
 
@@ -180,26 +155,12 @@ pub struct ProcessControlBlock {
 pub enum ProcessStatus {
     /// 正在运行
     Running,
-    /// 已经退出，携带退出码
-    #[expect(unused)]
-    Zombie(i32),
+    /// 已经有线程将进程退出
+    Exiting,
 }
 
 pub struct ProcessControlBlockInner {
     pub status: ProcessStatus,
-}
-
-impl ProcessControlBlock {
-    pub fn inner(&self) -> SpinMutexGuard<'_, ProcessControlBlockInner> {
-        self.inner.lock()
-    }
-}
-
-/// 进程资源
-///
-/// 只有进程下的线程的 TCB 会持有进程资源的引用。当线程全部终止后，进程的资源自然
-/// 就会被回收了。
-pub struct ProcessResource {
     /// 如果是内核进程，则该字段为 None
     pub memory_space: Option<MemorySpace>,
     /// 任务列表
@@ -218,12 +179,19 @@ pub struct ProcessResource {
     pub heap_size: isize,
 }
 
-impl SpinMutex<ProcessResource> {
-    pub fn cwd(&self) -> VirtualIndexNode {
-        self.lock().cwd.as_ref().cloned().unwrap()
+impl ProcessControlBlock {
+    pub fn inner(&self) -> SpinMutexGuard<'_, ProcessControlBlockInner> {
+        self.inner.lock()
     }
 
+    /// **该函数会对 inner 加锁**
+    pub fn cwd(&self) -> VirtualIndexNode {
+        self.inner().cwd.as_ref().unwrap().clone()
+    }
+
+    /// **该函数会对 inner 加锁**
     pub fn set_cwd(&self, cwd: VirtualIndexNode) {
-        self.lock().cwd = Some(cwd);
+        let mut inner = self.inner();
+        inner.cwd = Some(cwd);
     }
 }

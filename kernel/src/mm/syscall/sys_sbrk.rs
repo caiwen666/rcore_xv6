@@ -11,22 +11,20 @@ use crate::{
 fn sys_sbrk(args: [usize; 6]) -> Result<usize, SystemError> {
     let increment = args[0] as isize;
 
-    let resource = ProcessManager::current_resource();
-    let mut resource_guard = resource.lock();
+    let process = ProcessManager::current_process();
+    let mut inner = process.inner();
 
-    let result = USER_HEAP_START + resource_guard.heap_size as usize;
+    let result = USER_HEAP_START + inner.heap_size as usize;
     if increment == 0 {
         return Ok(result);
     }
-    if resource_guard.heap_size.checked_add(increment).is_none()
-        || resource_guard.heap_size + increment < 0
-    {
+    if inner.heap_size.checked_add(increment).is_none() || inner.heap_size + increment < 0 {
         return Err(SystemError::ENOMEM);
     }
 
-    resource_guard.heap_size += increment;
-    let heap_size = resource_guard.heap_size;
-    let memory_space = resource_guard.memory_space.as_mut().unwrap();
+    inner.heap_size += increment;
+    let heap_size = inner.heap_size;
+    let memory_space = inner.memory_space.as_mut().unwrap();
     // 寻找到 heap 内存区域
     let heap_area = memory_space
         .find_area(VirtAddr::new(USER_HEAP_START))

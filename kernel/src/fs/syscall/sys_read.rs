@@ -18,10 +18,9 @@ fn sys_read(args: [usize; 6]) -> Result<usize, SystemError> {
     if len == 0 {
         return Ok(0);
     }
-    let task = ProcessManager::current_task();
-    let resource = task.process_resource();
-    let resource_guard = resource.lock();
-    let file = resource_guard
+    let process = ProcessManager::current_process();
+    let inner = process.inner();
+    let file = inner
         .fd_table
         .get(fd)
         .and_then(|f| f.as_ref().cloned())
@@ -37,17 +36,17 @@ fn sys_read(args: [usize; 6]) -> Result<usize, SystemError> {
         Ok(())
     };
 
-    let memory_space = resource_guard.memory_space.as_ref().unwrap();
+    let memory_space = inner.memory_space.as_ref().unwrap();
     // 先检查一遍
     check(memory_space)?;
     // 后面的 file.read 会堵塞，这里先把锁给释放
-    drop(resource_guard);
+    drop(inner);
 
     let mut kernel_buf = vec![0; len];
     let len = file.read(&mut kernel_buf)?;
 
-    let resource_guard = resource.lock();
-    let memory_space = resource_guard.memory_space.as_ref().unwrap();
+    let inner = process.inner();
+    let memory_space = inner.memory_space.as_ref().unwrap();
     // 再检查一遍
     // 如果再检查一遍发现不满足要求的话，我们会白白消耗掉 file 的数据（如果 file 是字节流类型的）
     // 这种情况说明是用户程序的问题，我们内核暂时不去多管
