@@ -23,7 +23,7 @@ fn sys_read(args: [usize; 6]) -> Result<usize, SystemError> {
     let file = inner
         .fd_table
         .get(fd)
-        .and_then(|f| f.as_ref().cloned())
+        .map(|f| f.clone())
         .ok_or(SystemError::EBADF)?;
 
     let check = |memory_space: &MemorySpace| {

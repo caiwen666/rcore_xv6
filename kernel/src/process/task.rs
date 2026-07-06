@@ -78,7 +78,7 @@ impl TaskControlBlock {
         let kstack = KernelStackAllocator::alloc();
         let (_, kstack_top) = kstack.range();
         let mut inner = KERNEL_PROCESS.inner();
-        let id = inner.avail_task_id.alloc();
+        let id = inner.tasks.next_id();
         let task = Arc::new(Self {
             process: KERNEL_PROCESS.clone(),
             kstack,
@@ -94,11 +94,7 @@ impl TaskControlBlock {
             ),
             trap_context_paddr: None,
         });
-        if id >= inner.tasks.len() {
-            inner.tasks.push(Some(Arc::downgrade(&task)));
-        } else {
-            inner.tasks[id] = Some(Arc::downgrade(&task));
-        }
+        inner.tasks.push(Arc::downgrade(&task));
         task
     }
 
@@ -108,7 +104,7 @@ impl TaskControlBlock {
         let (_, kstack_high) = kstack.range();
 
         let mut inner = process.inner();
-        let id = inner.avail_task_id.alloc();
+        let id = inner.tasks.next_id();
         // 分配用户栈
         let (ustack_low, ustack_high) = process.ustack_vaddr(id);
         let memory_space = inner.memory_space.as_mut().unwrap();
@@ -181,11 +177,7 @@ impl TaskControlBlock {
             .set_pc(entry)
             .set_tls_base(tls_base);
 
-        if id >= inner.tasks.len() {
-            inner.tasks.push(Some(Arc::downgrade(&task)));
-        } else {
-            inner.tasks[id] = Some(Arc::downgrade(&task));
-        }
+        inner.tasks.push(Arc::downgrade(&task));
 
         task
     }
@@ -195,9 +187,9 @@ impl Drop for TaskControlBlock {
     fn drop(&mut self) {
         // 归还 tid
         let mut inner = self.process.inner();
-        inner.avail_task_id.dealloc(self.id);
-        inner.tasks[self.id] = None;
-        // 是否为最后一个线程，是的话就去标记这个进程已经结束
-        // TODO
+        inner.tasks.pop(self.id);
+        if inner.tasks.len() == 0 {
+            // TODO 最后一个线程负责退出整个进程
+        }
     }
 }

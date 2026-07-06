@@ -52,11 +52,9 @@ impl ProcessManager {
                 ProcessControlBlockInner {
                     status: ProcessStatus::Running,
                     memory_space: None,
-                    tasks: Vec::new(),
-                    avail_task_id: RecycleAllocator::new(),
+                    tasks: RecycleAllocator::new(),
                     cwd: None,
-                    fd_table: Vec::new(),
-                    avail_fd: RecycleAllocator::new(),
+                    fd_table: RecycleAllocator::new(),
                     heap_size: 0,
                 },
                 "kernel_process_inner",
@@ -84,7 +82,6 @@ impl ProcessManager {
     }
 
     /// 获取当前进程
-    #[expect(unused)]
     pub fn current_process() -> Arc<ProcessControlBlock> {
         let task = Self::current_task();
         task.process().clone()
@@ -115,11 +112,9 @@ impl ProcessManager {
                 ProcessControlBlockInner {
                     status: ProcessStatus::Running,
                     memory_space: Some(memory_space),
-                    tasks: Vec::new(),
-                    avail_task_id: RecycleAllocator::new(),
+                    tasks: RecycleAllocator::new(),
                     cwd: Some(cwd),
-                    fd_table: Vec::new(),
-                    avail_fd: RecycleAllocator::new(),
+                    fd_table: RecycleAllocator::new(),
                     heap_size: 0,
                 },
                 "process_inner",
@@ -163,17 +158,10 @@ pub struct ProcessControlBlockInner {
     pub status: ProcessStatus,
     /// 如果是内核进程，则该字段为 None
     pub memory_space: Option<MemorySpace>,
-    /// 任务列表
-    ///
-    /// 列表中的每个元素相当于是一个槽位，随着线程的创建，这个列表会越来越大。
-    /// 当线程退出时，其对应的槽位不会被回收，而是会被标记为 None。
-    /// 在创建线程时会优先查看任务列表中是否已有空闲槽位。
-    pub tasks: Vec<Option<Weak<TaskControlBlock>>>,
-    pub avail_task_id: RecycleAllocator,
+    pub tasks: RecycleAllocator<Weak<TaskControlBlock>>,
     /// 只有内核进程在初始时为 None，其余情况下都不会为 None
     pub cwd: Option<VirtualIndexNode>,
-    pub fd_table: Vec<Option<Arc<dyn File>>>,
-    pub avail_fd: RecycleAllocator,
+    pub fd_table: RecycleAllocator<Arc<dyn File>>,
     // heap 在内存空间对应的区域的大小是经过对齐的，这里记录一下对齐前的真实大小，确保
     // sbrk 返回的地址是对的
     pub heap_size: isize,

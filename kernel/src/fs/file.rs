@@ -35,21 +35,13 @@ impl ProcessControlBlock {
             Arc::new(VirtualFile::new(inode))
         };
         let mut inner = self.inner();
-        let fd = inner.avail_fd.alloc();
-        if fd >= inner.fd_table.len() {
-            inner.fd_table.push(Some(file));
-        } else {
-            inner.fd_table[fd] = Some(file);
-        }
+        let fd = inner.fd_table.push(file);
         Some(fd as u64)
     }
 
     /// **该函数会对 inner 加锁**
     pub fn get_file(&self, fd: u64) -> Option<Arc<dyn File>> {
         let inner = self.inner();
-        inner
-            .fd_table
-            .get(fd as usize)
-            .and_then(|f| f.as_ref().cloned())
+        inner.fd_table.get(fd as usize).map(|f| f.clone())
     }
 }
