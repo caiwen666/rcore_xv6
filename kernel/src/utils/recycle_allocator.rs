@@ -41,16 +41,12 @@ impl<T> RecycleAllocator<T> {
     /// # Panics
     ///
     /// 如果对应 id 的元素不存在，则 panic
-    ///
-    /// # Returns
-    ///
-    /// 如果对应 id 的元素不存在，则返回 None
-    pub fn pop(&mut self, id: usize) -> Option<T> {
+    pub fn pop(&mut self, id: usize) {
         if core::hint::unlikely(id >= self.items.len() || self.items[id].is_none()) {
             panic!("RecycleAllocator: id {} is out of range!", id);
         }
         self.recycled.insert(id);
-        self.items.get_mut(id).and_then(|item| item.take())
+        self.items[id] = None;
     }
     /// 获取对应 id 的元素
     ///

@@ -23,6 +23,7 @@ fn sys_exit(args: [usize; 6]) -> Result<usize, SystemError> {
         let mut task_inner = task.lock();
         task_inner.killed = true;
         if task_inner.status == TaskStatus::Blocked(true) {
+            task_inner.status = TaskStatus::Ready;
             TaskScheduler::push(task.clone());
         }
     }
