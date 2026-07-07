@@ -1,5 +1,6 @@
 use alloc::{collections::btree_set::BTreeSet, vec::Vec};
 
+#[derive(Clone)]
 pub struct RecycleAllocator<T> {
     /// 还没被分配过的最小 id
     current: usize,
@@ -47,6 +48,18 @@ impl<T> RecycleAllocator<T> {
         }
         self.recycled.insert(id);
         self.items[id] = None;
+    }
+    /// 直接将元素插入到某个位置，主要用于 fork。如果原来的位置有元素则会被 drop 掉
+    pub fn insert(&mut self, id: usize, item: T) {
+        if id >= self.items.len() {
+            for i in self.items.len()..=id {
+                self.items.push(None);
+                self.recycled.insert(i);
+            }
+            self.current = id + 1;
+        }
+        self.recycled.remove(&id);
+        self.items[id] = Some(item);
     }
     /// 获取对应 id 的元素
     ///

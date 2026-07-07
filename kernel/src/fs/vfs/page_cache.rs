@@ -82,7 +82,7 @@ impl VirtualIndexNode {
         if offset < inode.metadata().size {
             let end = (offset + MMArch::PAGE_SIZE).min(inode.metadata().size) - offset;
             // 保证读取数据在文件大小范围内
-            inode.read_at(offset, &mut frame.as_mut_slice()[..end]);
+            inode.read_at(offset, &mut frame.as_slice_mut()[..end]);
         }
         cached_page.frame = Some(frame);
         cached_page
@@ -126,7 +126,7 @@ impl VirtualIndexNode {
                 &cached_page,
                 cached_page.lock(),
             );
-            let data = page_guard.frame.as_mut().unwrap().as_mut_slice();
+            let data = page_guard.frame.as_mut().unwrap().as_slice_mut();
             buf[pos..pos + block.size()]
                 .copy_from_slice(&data[block.offset()..block.offset() + block.size()]);
             pos += block.size();
@@ -163,7 +163,7 @@ impl VirtualIndexNode {
                 &cached_page,
                 cached_page.lock(),
             );
-            let data = page_guard.frame.as_mut().unwrap().as_mut_slice();
+            let data = page_guard.frame.as_mut().unwrap().as_slice_mut();
             data[block.offset()..block.offset() + block.size()]
                 .copy_from_slice(&buf[pos..pos + block.size()]);
             self.page_cache.dirty.lock().insert(file_offset);
@@ -204,7 +204,7 @@ impl VirtualIndexNode {
             let end = (offset + MMArch::PAGE_SIZE).min(file_size) - offset;
             let mut page_guard = cached_page.lock();
             let frame = page_guard.frame.as_mut().unwrap();
-            inode.write_at(offset, &frame.as_mut_slice()[..end]);
+            inode.write_at(offset, &frame.as_slice_mut()[..end]);
         }
     }
 

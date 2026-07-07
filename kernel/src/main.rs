@@ -94,7 +94,7 @@ pub fn kthread_main() {
     ext2_mountpoint.mount(VirtualFileSystem::new(Ext2FileSystem::new(VIRTIO0.clone())));
 
     // 启动第一个进程
-    let fd = process.open_file("/root/sh").unwrap();
+    let fd = process.open_file("/root/bin/sh").unwrap();
     let file = process.get_file(fd).unwrap();
     let file_len = file.seek(FileSeekMethod::End(0)).unwrap();
     file.seek(FileSeekMethod::Absolute(0)).unwrap();

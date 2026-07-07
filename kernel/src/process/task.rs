@@ -192,6 +192,37 @@ impl TaskControlBlock {
 
         task
     }
+
+    /// fork 当前线程，并绑到指定进程上。不会将线程放入调度循环中。
+    pub(super) fn fork(&self, process: Arc<ProcessControlBlock>) -> Arc<Self> {
+        let kstack = KernelStackAllocator::alloc();
+        let (_, kstack_high) = kstack.range();
+        let mut process_inner = process.inner();
+        let memory_space = process_inner.memory_space.as_ref().unwrap();
+        let (trap_context_paddr, _) = memory_space
+            .translate_vaddr(process.trap_context_vaddr(self.id))
+            .unwrap();
+        let task = Arc::new(Self {
+            process: process.clone(),
+            kstack,
+            id: self.id,
+            kthread_entry: KthreadEntryCell::empty(),
+            inner: SpinMutex::new(
+                TaskControlBlockInner {
+                    status: TaskStatus::Ready,
+                    task_context: ArchTaskContext::new(kstack_high),
+                    killed: false,
+                },
+                "task_control_block_inner",
+            ),
+            trap_context_paddr: Some(trap_context_paddr),
+        });
+        // trap 上下文页从父进程复制而来，其中的 kernel_sp 仍指向父进程内核栈，
+        // 子进程陷入内核时必须使用自己的内核栈。
+        task.trap_context().kernel_sp = kstack_high.inner();
+        process_inner.tasks.insert(self.id, Arc::downgrade(&task));
+        task
+    }
 }
 
 impl Drop for TaskControlBlock {

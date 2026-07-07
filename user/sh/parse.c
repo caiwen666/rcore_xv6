@@ -1,7 +1,7 @@
 #include "parse.h"
-#include "../lib/stdio.h"
-#include "../lib/stdlib.h"
-#include "../lib/string.h"
+#include "lib/stdio.h"
+#include "lib/stdlib.h"
+#include "lib/string.h"
 #include "cmd.h"
 #include "common.h"
 
