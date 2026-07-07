@@ -13,6 +13,9 @@ pub enum SystemError {
     /// 错误的文件描述符
     /// Bad file descriptor.
     EBADF = 9,
+    /// 没有子进程
+    /// No child process.
+    ECHILD = 10,
     /// 没有足够的空间
     /// Not enough space.
     ENOMEM = 12,

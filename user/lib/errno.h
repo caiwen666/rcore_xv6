@@ -5,8 +5,11 @@
 #ifndef RCORE_XV6_ERRNO_H
 #define RCORE_XV6_ERRNO_H
 
+#define EPERM 1
 #define ENOENT 2
+#define EINTR 4
 #define EBADF 9
+#define ECHILD 10
 #define ENOMEM 12
 #define EFAULT 14
 #define ENOTDIR 20

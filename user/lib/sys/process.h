@@ -26,4 +26,14 @@ int fork(void);
  */
 isize sleep(usize us);
 
+/**
+ * 等待子进程退出
+ * @param pid 要等待的子进程 pid；为 0 时等待任意子进程
+ * @param status 存放子进程退出码的指针，可为 NULL
+ * @param non_blocking 0 表示阻塞等待；非 0 表示非阻塞，无已退出子进程时返回 0
+ * @return 成功返回已退出子进程的 pid；非阻塞且无已退出子进程时返回 0；
+ *         失败返回 -1 并设置 errno
+ */
+int waitpid(int pid, int *status, int non_blocking);
+
 #endif
