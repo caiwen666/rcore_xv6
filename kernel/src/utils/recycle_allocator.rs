@@ -52,13 +52,13 @@ impl<T> RecycleAllocator<T> {
     /// 直接将元素插入到某个位置，主要用于 fork。如果原来的位置有元素则会被 drop 掉
     pub fn insert(&mut self, id: usize, item: T) {
         if id >= self.items.len() {
-            for _ in self.items.len()..=id {
+            for i in self.items.len()..=id {
                 self.items.push(None);
+                self.recycled.insert(i);
             }
             self.current = id + 1;
-        } else {
-            self.recycled.remove(&id);
         }
+        self.recycled.remove(&id);
         self.items[id] = Some(item);
     }
     /// 获取对应 id 的元素

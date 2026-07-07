@@ -224,6 +224,10 @@ impl MemoryArea {
     ///
     /// 该函数复制出来的内存区域具有 copy on write 特性，直到有写操作发生时才会真正复制数据
     pub fn fork(&self, new_base_vaddr: VirtAddr) -> Self {
+        assert!(
+            self.area_type == MemoryAreaType::Private,
+            "Memory area type is not private"
+        );
         let mut new_area = Self::new(
             new_base_vaddr,
             self.size,
