@@ -16,6 +16,7 @@
 #define SYS_EXIT 5
 #define SYS_FORK 6
 #define SYS_SLEEP 7
+#define SYS_WAITPID 8
 
 isize syscall0(usize id);
 isize syscall1(usize id, usize arg0);

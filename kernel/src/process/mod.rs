@@ -20,7 +20,8 @@ use crate::{
     mm::{MemoryManagementArch, address::VirtAddr, mem_space::MemorySpace},
     println,
     process::{
-        cpu::CPUManager, kthread::spawn_kthread, schedule::TaskScheduler, task::TaskControlBlock,
+        cpu::CPUManager, kthread::spawn_kthread, schedule::TaskScheduler, sleep::WaitQueue,
+        task::TaskControlBlock,
     },
     sync::spin::{SpinMutex, SpinMutexGuard},
     utils::RecycleAllocator,
@@ -55,6 +56,7 @@ impl ProcessManager {
             // 内核进程的 pid 固定为 0
             pid: 0,
             tls_size: None,
+            wait_queue: WaitQueue::new(),
             inner: SpinMutex::new(
                 ProcessControlBlockInner {
                     status: ProcessStatus::Running,
@@ -118,6 +120,7 @@ impl ProcessManager {
         let process = Arc::new(ProcessControlBlock {
             pid: PID_ALLOCATOR.fetch_add(1, Ordering::Relaxed),
             tls_size,
+            wait_queue: WaitQueue::new(),
             inner: SpinMutex::new(
                 ProcessControlBlockInner {
                     status: ProcessStatus::Running,
@@ -171,6 +174,7 @@ impl ProcessManager {
         let new_process = Arc::new(ProcessControlBlock {
             pid: PID_ALLOCATOR.fetch_add(1, Ordering::Relaxed),
             tls_size: process.tls_size,
+            wait_queue: WaitQueue::new(),
             inner: SpinMutex::new(
                 ProcessControlBlockInner {
                     status: ProcessStatus::Running,
@@ -210,6 +214,8 @@ pub struct ProcessControlBlock {
     pub pid: usize,
     /// 进程需要的 tls 区域的大小，按页大小对齐
     pub tls_size: Option<usize>,
+    /// 用于等待子进程
+    pub wait_queue: WaitQueue,
     inner: SpinMutex<ProcessControlBlockInner>,
 }
 

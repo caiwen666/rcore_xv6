@@ -266,6 +266,7 @@ impl Drop for TaskControlBlock {
             // 砍掉当前进程到父进程和父进程到当前进程的引用
             parent_inner.children.remove(&self.process.pid);
             inner.parent = None;
+            origin_parent.wait_queue.wake_all();
         }
     }
 }

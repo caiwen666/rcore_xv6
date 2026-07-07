@@ -5,8 +5,11 @@ static const struct {
   int errnum;
   const char *msg;
 } errno_messages[] = {
+    {EPERM, "Operation not permitted"},
     {ENOENT, "No such file or directory"},
+    {EINTR, "Interrupted function"},
     {EBADF, "Bad file descriptor"},
+    {ECHILD, "No child process"},
     {ENOMEM, "Not enough space"},
     {EFAULT, "Bad address"},
     {ENOTDIR, "Not a directory"},
