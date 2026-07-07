@@ -1,9 +1,9 @@
 #ifndef SH_DEBUG_H
 #define SH_DEBUG_H
 
-#include "../lib/stdio.h"
-#include "../lib/stdlib.h"
-#include "../lib/string.h"
+#include "lib/stdio.h"
+#include "lib/stdlib.h"
+#include "lib/string.h"
 #include "cmd.h"
 
 static const char *cmd_type_name(int type) {

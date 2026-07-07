@@ -10,6 +10,7 @@ pub mod task;
 use crate::{
     arch::{IrqArch, MMArch},
     driver::{self, sifive_test::ShutdownReason},
+    error::SystemError,
     exception::InterruptArch,
     fs::{
         ROOT_FS,
@@ -146,6 +147,55 @@ impl ProcessManager {
             .lock()
             .insert(process.pid, Arc::downgrade(&process));
         process
+    }
+
+    /// fork 当前进程
+    ///
+    /// **会对当前进程进行加锁**
+    ///
+    /// # Errors
+    ///
+    /// - [SystemError::EPERM] 如果当前进程有多个线程则抛出该错误，目前出于简单起见只允许单线程的进程 fork
+    pub fn fork() -> Result<Arc<ProcessControlBlock>, SystemError> {
+        let process = ProcessManager::current_process();
+        let mut process_inner = process.inner();
+        if !matches!(process_inner.status, ProcessStatus::Running) {
+            // 如果当前进程已经退出，则直接抛出错误，这样当前系统调用会尽快返回，并在返回用户态前结束
+            // 随便返回一个错误，因为什么错误其实都无所谓了，我们的目标是让系统调用尽快结束
+            return Err(SystemError::EPERM);
+        }
+        if process_inner.tasks.len() != 1 {
+            return Err(SystemError::EPERM);
+        }
+        let new_memory_space = process_inner.memory_space.as_ref().unwrap().fork();
+        let new_process = Arc::new(ProcessControlBlock {
+            pid: PID_ALLOCATOR.fetch_add(1, Ordering::Relaxed),
+            tls_size: process.tls_size,
+            inner: SpinMutex::new(
+                ProcessControlBlockInner {
+                    status: ProcessStatus::Running,
+                    memory_space: Some(new_memory_space),
+                    tasks: RecycleAllocator::new(),
+                    cwd: process_inner.cwd.clone(),
+                    fd_table: process_inner.fd_table.clone(),
+                    heap_size: process_inner.heap_size,
+                    parent: Some(process.clone()),
+                    children: BTreeMap::new(),
+                    exited_children: BTreeMap::new(),
+                },
+                "process_inner",
+            ),
+        });
+        PROCESS_TABLE
+            .lock()
+            .insert(new_process.pid, Arc::downgrade(&new_process));
+        let current_task = ProcessManager::current_task();
+        let task = current_task.fork(new_process.clone());
+        process_inner
+            .children
+            .insert(new_process.pid, new_process.clone());
+        TaskScheduler::push(task);
+        Ok(new_process)
     }
 }
 

@@ -171,7 +171,7 @@ impl MemoryArea {
             while idx != block.block_id() {
                 (idx, frame) = frame_iter.next().unwrap();
             }
-            let frame = frame.as_mut_slice();
+            let frame = frame.as_slice_mut();
             frame[block.offset()..block.offset() + block.size()]
                 .copy_from_slice(&data[pos..pos + block.size()]);
             pos += block.size();
@@ -208,6 +208,37 @@ impl MemoryArea {
         }
         self.size = new_count * MMArch::PAGE_SIZE;
     }
+
+    /// 复制当前内存区域
+    ///
+    /// # Parameters
+    ///
+    /// - `new_base_vaddr`: 新的内存区域的起始虚拟地址
+    ///
+    /// # Panics
+    ///
+    /// - 如果内存区域类型不为 [MemoryAreaType::Private]，则 panic
+    /// - 如果 `new_base_vaddr` 不是 [MMArch::PAGE_SIZE] 的倍数，则 panic
+    ///
+    /// # Notes
+    ///
+    /// 该函数复制出来的内存区域具有 copy on write 特性，直到有写操作发生时才会真正复制数据
+    pub fn fork(&self, new_base_vaddr: VirtAddr) -> Self {
+        let mut new_area = Self::new(
+            new_base_vaddr,
+            self.size,
+            self.permission,
+            self.area_type,
+            self.name,
+        );
+        // TODO copy on write 暂未实现
+        // 逐页复制数据
+        self.private_frames
+            .values()
+            .zip(new_area.private_frames.iter_mut().map(|(_, frame)| frame))
+            .for_each(|(src, dst)| dst.as_slice_mut().copy_from_slice(src.as_slice()));
+        new_area
+    }
 }
 
 impl PartialEq for MemoryArea {
@@ -232,7 +263,7 @@ impl MemorySpace {
     /// 创建一个空白页表，对应的物理页帧属于当前内存空间
     ///
     /// 返回创建的页表的物理地址
-    pub fn create_page_table(&mut self) -> PhysAddr {
+    fn create_page_table(&mut self) -> PhysAddr {
         let count = MMArch::PAGE_TABLE_SIZE.div_ceil(MMArch::PAGE_SIZE);
         let mut frame = alloc_frame(count).expect("Failed to allocate page table: OOM");
         frame.clear();
@@ -240,22 +271,6 @@ impl MemorySpace {
         assert!(!self.page_table_frames.contains_key(&frame.addr()));
         self.page_table_frames.insert(frame.addr(), frame);
         paddr
-    }
-
-    /// 创建内存空间
-    ///
-    /// 自动映射跳板区
-    pub fn create() -> Self {
-        let mut memory_space = Self {
-            page_table_frames: BTreeMap::new(),
-            root_page_table: PhysAddr::new(0),
-            areas: BTreeMap::new(),
-        };
-        let root_page_table = memory_space.create_page_table();
-        memory_space.root_page_table = root_page_table;
-        memory_space.map_trampoline();
-
-        memory_space
     }
 
     /// 映射跳板区域
@@ -281,75 +296,96 @@ impl MemorySpace {
         }
     }
 
-    /// 检查是否和已有 area 重叠
-    fn check_area_overlap(&self, start: VirtAddr, size: usize) -> bool {
-        if self.areas.contains_key(&start) {
-            return true;
-        }
-        if let Some((_, pred)) = self.areas.range(..start).next_back()
-            && pred.base_vaddr() + pred.size() > start
-        {
-            return true;
-        }
-        if let Some((nb, _)) = self
-            .areas
-            .range((Bound::Excluded(start), Bound::Unbounded))
-            .next()
-            && *nb < start + size
-        {
-            return true;
-        }
-        false
-    }
-
-    fn flush(&mut self) {
-        MMArch::local_flush_tlb();
-        // SAFETY: flush 仅在 push/remove 中被调用，而它们都通过 KERNEL_SPACE.lock() 等自旋锁进入，
-        // 此时中断已经关闭
-        unsafe { MMArch::tlb_shootdown() };
-    }
-
-    /// 添加一个内存区域
-    pub fn push(&mut self, area: MemoryArea) {
-        // 需要确保没重叠
-        if core::hint::unlikely(self.check_area_overlap(area.base_vaddr(), area.size())) {
-            panic!("Memory area {:?} overlaps with existing area", area);
-        }
-        match area.area_type() {
-            MemoryAreaType::Private => {
-                // 还需要把物理页映射到页表中
-                for (idx, (_, frame)) in area.private_frame().iter().enumerate() {
-                    let vaddr = area.base_vaddr() + idx * MMArch::PAGE_SIZE;
-                    let paddr = frame.addr();
-                    let permission = area.permission();
-                    self.map(vaddr, paddr, permission);
-                }
-            }
-            MemoryAreaType::Identical => {
-                for i in 0..(area.size() / MMArch::PAGE_SIZE) {
-                    let vaddr = area.base_vaddr() + i * MMArch::PAGE_SIZE;
-                    let paddr = PhysAddr::new(vaddr.inner());
-                    let permission = area.permission();
-                    self.map(vaddr, paddr, permission);
-                }
-            }
-        }
-        self.areas.insert(area.base_vaddr(), area);
-        self.flush();
-    }
-
-    /// # Safety
+    /// 创建内存空间
     ///
-    /// - 需要确保引用 PageTable 的生命周期不超过 MemorySpace 的生命周期
-    /// - 你应该把返回值视为一个对 MemorySpace 的可变引用，遵循可变引用的所有规则
-    pub unsafe fn table(&self) -> PageTable {
-        PageTable::new(
-            VirtAddr::new(0),
-            self.root_page_table,
-            MMArch::PAGE_LEVELS - 1,
-        )
+    /// 自动映射跳板区
+    pub fn create() -> Self {
+        let mut memory_space = Self {
+            page_table_frames: BTreeMap::new(),
+            root_page_table: PhysAddr::new(0),
+            areas: BTreeMap::new(),
+        };
+        let root_page_table = memory_space.create_page_table();
+        memory_space.root_page_table = root_page_table;
+        memory_space.map_trampoline();
+
+        memory_space
     }
 
+    /// 将当前内存空间复制
+    pub fn fork(&self) -> Self {
+        let mut memory_space = MemorySpace::create();
+        for area in self.areas.values() {
+            memory_space.push(area.fork(area.base_vaddr()));
+        }
+        memory_space
+    }
+
+    /// 打印当前内存空间的情况
+    pub fn print_info(&self, show_page_table_frames: bool) {
+        println!("Root Page Table: {:?}", self.root_page_table);
+        if show_page_table_frames {
+            for frame in self.page_table_frames.values() {
+                println!("\t{:?}", frame);
+            }
+        }
+        let name_col = self
+            .areas
+            .values()
+            .map(|a| a.name().len())
+            .max()
+            .unwrap_or(0)
+            .max(4);
+        println!("Memory Areas:");
+        for area in self.areas.values() {
+            let area_type = match area.area_type() {
+                MemoryAreaType::Private => "P",
+                MemoryAreaType::Identical => "I",
+            };
+            println!(
+                "  {:>1}  {:<6?}  {:<name_col$}  [0x{:X}, 0x{:X})",
+                area_type,
+                area.permission(),
+                area.name(),
+                area.base_vaddr().inner(),
+                area.base_vaddr().inner() + area.size(),
+                name_col = name_col,
+            );
+        }
+    }
+
+    pub fn activate(&self) {
+        MMArch::activate(self);
+    }
+}
+
+impl MemorySpace {
+    /// 将当前内存空间的虚拟地址翻译成物理地址
+    ///
+    /// # Returns
+    ///
+    /// 如果当前内存空间没有映射该虚拟地址，则返回 None
+    ///
+    /// 否则返回对应的物理地址和权限
+    pub fn translate_vaddr(&self, vaddr: VirtAddr) -> Option<(PhysAddr, MemoryPermission)> {
+        let mut table = unsafe { self.table() };
+        loop {
+            let index = table.index_of(vaddr)?;
+            if table.level() == 0 {
+                let page_offset = vaddr.inner() & (MMArch::PAGE_SIZE - 1);
+                let pte = table.get(index);
+                if !pte.is_valid() {
+                    return None;
+                }
+                return Some((pte.paddr() + page_offset, pte.permission()));
+            } else {
+                table = unsafe { table.next_level_table(index)? }
+            }
+        }
+    }
+}
+
+impl MemorySpace {
     /// 映射一个虚拟页面到物理页面
     ///
     /// # Parameters
@@ -407,6 +443,77 @@ impl MemorySpace {
         }
     }
 
+    fn flush(&mut self) {
+        MMArch::local_flush_tlb();
+        // SAFETY: flush 仅在 push/remove 中被调用，而它们都通过 KERNEL_SPACE.lock() 等自旋锁进入，
+        // 此时中断已经关闭
+        unsafe { MMArch::tlb_shootdown() };
+    }
+
+    /// # Safety
+    ///
+    /// - 需要确保引用 PageTable 的生命周期不超过 MemorySpace 的生命周期
+    /// - 你应该把返回值视为一个对 MemorySpace 的可变引用，遵循可变引用的所有规则
+    pub unsafe fn table(&self) -> PageTable {
+        PageTable::new(
+            VirtAddr::new(0),
+            self.root_page_table,
+            MMArch::PAGE_LEVELS - 1,
+        )
+    }
+}
+
+impl MemorySpace {
+    /// 检查是否和已有 area 重叠
+    fn check_area_overlap(&self, start: VirtAddr, size: usize) -> bool {
+        if self.areas.contains_key(&start) {
+            return true;
+        }
+        if let Some((_, pred)) = self.areas.range(..start).next_back()
+            && pred.base_vaddr() + pred.size() > start
+        {
+            return true;
+        }
+        if let Some((nb, _)) = self
+            .areas
+            .range((Bound::Excluded(start), Bound::Unbounded))
+            .next()
+            && *nb < start + size
+        {
+            return true;
+        }
+        false
+    }
+
+    /// 添加一个内存区域
+    pub fn push(&mut self, area: MemoryArea) {
+        // 需要确保没重叠
+        if core::hint::unlikely(self.check_area_overlap(area.base_vaddr(), area.size())) {
+            panic!("Memory area {:?} overlaps with existing area", area);
+        }
+        match area.area_type() {
+            MemoryAreaType::Private => {
+                // 还需要把物理页映射到页表中
+                for (idx, (_, frame)) in area.private_frame().iter().enumerate() {
+                    let vaddr = area.base_vaddr() + idx * MMArch::PAGE_SIZE;
+                    let paddr = frame.addr();
+                    let permission = area.permission();
+                    self.map(vaddr, paddr, permission);
+                }
+            }
+            MemoryAreaType::Identical => {
+                for i in 0..(area.size() / MMArch::PAGE_SIZE) {
+                    let vaddr = area.base_vaddr() + i * MMArch::PAGE_SIZE;
+                    let paddr = PhysAddr::new(vaddr.inner());
+                    let permission = area.permission();
+                    self.map(vaddr, paddr, permission);
+                }
+            }
+        }
+        self.areas.insert(area.base_vaddr(), area);
+        self.flush();
+    }
+
     /// 将从某个虚拟地址开始的内存区域移除
     ///
     /// # Panics
@@ -424,7 +531,9 @@ impl MemorySpace {
         }
         self.flush();
     }
+}
 
+impl MemorySpace {
     /// 寻找某个虚拟地址所在的内存区域，如果虚拟地址不属于任何内存区域，则返回 None
     pub fn find_area(&self, vaddr: VirtAddr) -> Option<&MemoryArea> {
         self.areas
@@ -496,66 +605,5 @@ impl MemorySpace {
         }
         self.flush();
         true
-    }
-
-    /// 将当前内存空间的虚拟地址翻译成物理地址
-    ///
-    /// # Returns
-    ///
-    /// 如果当前内存空间没有映射该虚拟地址，则返回 None
-    ///
-    /// 否则返回对应的物理地址和权限
-    pub fn translate_vaddr(&self, vaddr: VirtAddr) -> Option<(PhysAddr, MemoryPermission)> {
-        let mut table = unsafe { self.table() };
-        loop {
-            let index = table.index_of(vaddr)?;
-            if table.level() == 0 {
-                let page_offset = vaddr.inner() & (MMArch::PAGE_SIZE - 1);
-                let pte = table.get(index);
-                if !pte.is_valid() {
-                    return None;
-                }
-                return Some((pte.paddr() + page_offset, pte.permission()));
-            } else {
-                table = unsafe { table.next_level_table(index)? }
-            }
-        }
-    }
-
-    /// 打印当前内存空间的情况
-    pub fn print_info(&self, show_page_table_frames: bool) {
-        println!("Root Page Table: {:?}", self.root_page_table);
-        if show_page_table_frames {
-            for frame in self.page_table_frames.values() {
-                println!("\t{:?}", frame);
-            }
-        }
-        let name_col = self
-            .areas
-            .values()
-            .map(|a| a.name().len())
-            .max()
-            .unwrap_or(0)
-            .max(4);
-        println!("Memory Areas:");
-        for area in self.areas.values() {
-            let area_type = match area.area_type() {
-                MemoryAreaType::Private => "P",
-                MemoryAreaType::Identical => "I",
-            };
-            println!(
-                "  {:>1}  {:<6?}  {:<name_col$}  [0x{:X}, 0x{:X})",
-                area_type,
-                area.permission(),
-                area.name(),
-                area.base_vaddr().inner(),
-                area.base_vaddr().inner() + area.size(),
-                name_col = name_col,
-            );
-        }
-    }
-
-    pub fn activate(&self) {
-        MMArch::activate(self);
     }
 }

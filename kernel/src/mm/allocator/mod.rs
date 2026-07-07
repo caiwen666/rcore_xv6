@@ -58,7 +58,13 @@ impl PageFrame {
         };
     }
 
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe {
+            core::slice::from_raw_parts(self.addr.get::<u8>(), self.count * MMArch::PAGE_SIZE)
+        }
+    }
+
+    pub fn as_slice_mut(&mut self) -> &mut [u8] {
         unsafe {
             core::slice::from_raw_parts_mut(
                 self.addr.get_mut::<u8>(),

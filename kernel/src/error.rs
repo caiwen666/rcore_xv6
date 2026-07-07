@@ -1,6 +1,9 @@
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemError {
+    /// 操作不被允许
+    /// Operation not permitted.
+    EPERM = 1,
     /// 没有指定的文件或目录。
     /// No such file or directory.
     ENOENT = 2,

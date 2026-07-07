@@ -1,7 +1,7 @@
 #include "lineedit.h"
-#include "../lib/stdio.h"
-#include "../lib/stdlib.h"
-#include "../lib/string.h"
+#include "lib/stdio.h"
+#include "lib/stdlib.h"
+#include "lib/string.h"
 #include "common.h"
 
 static char history[MAXHISTORY][MAXLINE];

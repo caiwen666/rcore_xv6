@@ -4,18 +4,18 @@ LD      := $(TOOLPREFIX)ld
 OBJCOPY := $(TOOLPREFIX)objcopy
 READELF := $(TOOLPREFIX)readelf
 
-# 单个程序：make APP=hello
-# 多个程序：make APPS="hello sh"
-# 在 Makefile 内写默认值时不要加引号，应写：APPS ?= hello sh
-# APP 的名字应该是 user 目录下对应的 .c 文件或是文件夹。
-# 对于前者，会编译 .c 文件，对于后者，会将文件夹下的所有文件都编译。
-APPS ?= hello sh
+# 用户程序列表：路径相对于 user/ 目录
+#   .c 文件：编译该文件并链接
+#   目录：编译目录下所有 .c 并链接
+# 示例：hello.c sh tests/my/fork_sleep.c
+# 单个程序：make APP=hello.c
+PROGS ?= hello.c sh tests/my/fork_sleep.c
 ifneq ($(origin APP),undefined)
-APPS := $(APP)
+PROGS := $(APP)
 endif
 
-TARGET   := target
-CRT_DIR  := lib/crt
+TARGET  := target
+CRT_DIR := lib/crt
 
 # -march=rv64gc: 设置架构，并开启 G（整数 + 乘除 + 原子 + 单/双精度浮点）指令集
 # 	C（部分指令压缩到 16 位）指令集
@@ -30,44 +30,46 @@ CRT_DIR  := lib/crt
 # -Wall -Wextra: 启用所有警告
 CFLAGS  := -march=rv64gc -mabi=lp64 -mcmodel=medany \
            -fno-pie -fno-pic -fno-stack-protector \
-           -nostdlib -nostdinc -ffreestanding -static -Wall -Wextra
+           -nostdlib -nostdinc -ffreestanding -static -Wall -Wextra \
+           -I.
 LDFLAGS := -T $(CRT_DIR)/linker.ld -nostdlib -static -Wl,--gc-sections
 
 # lib/ 下递归收集全部 .c（排除 crt 启动代码）→ 合并为 lib.o
 LIB_SRCS := $(shell find lib -type f -name '*.c' ! -path '$(CRT_DIR)/*')
 LIB_OBJS := $(patsubst lib/%.c,$(TARGET)/lib/%.o,$(LIB_SRCS))
 LIB_O    := $(TARGET)/lib.o
-
 CRT0_O   := $(TARGET)/crt0.o
-APP_BINS := $(addprefix $(TARGET)/,$(APPS))
+
+# prog_bin:  hello.c -> target/hello, sh -> target/sh
+#           tests/my/fork_sleep.c -> target/tests/my/fork_sleep
+prog_bin  = $(TARGET)/$(if $(filter %.c,$(1)),$(patsubst %.c,%,$(1)),$(1))
+# prog_objs: 对应的对象文件，路径保留在 target/obj/ 下
+prog_objs = $(if $(filter %.c,$(1)),\
+              $(TARGET)/obj/$(patsubst %.c,%.o,$(1)),\
+              $(patsubst $(1)/%.c,$(TARGET)/obj/$(1)/%.o,$(sort $(wildcard $(1)/*.c))))
+
+PROG_BINS := $(foreach p,$(PROGS),$(call prog_bin,$(p)))
 
 .PHONY: all clean lib
 
-all: $(APP_BINS)
+all: lib $(PROG_BINS)
 
-lib: $(LIB_O)
+lib: $(LIB_O) $(CRT0_O)
 
-# 每个 app 单独生成编译与链接规则，对象文件放在 target/obj/<app>/ 下避免与二进制 target/<app> 冲突
-define app_rules
-ifneq ($$(wildcard $(1)/*.c),)
-APP_OBJS_$(1) := $$(addprefix $(TARGET)/obj/$(1)/,$$(notdir $$(patsubst %.c,%.o,$$(sort $$(wildcard $(1)/*.c)))))
-
-$(TARGET)/obj/$(1)/%.o: $(1)/%.c | $(TARGET)
+define link_rule
+$(call prog_bin,$(1)): $(call prog_objs,$(1)) $(LIB_O) $(CRT0_O) | $(TARGET)
 	@mkdir -p $$(dir $$@)
-	$(CC) $(CFLAGS) -c -o $$@ $$<
-else
-APP_OBJS_$(1) := $(TARGET)/obj/$(1)/$(1).o
-
-$(TARGET)/obj/$(1)/$(1).o: $(1).c | $(TARGET)
-	@mkdir -p $$(dir $$@)
-	$(CC) $(CFLAGS) -c -o $$@ $$<
-endif
-
-$(TARGET)/$(1): $$(APP_OBJS_$(1)) $(LIB_O) $(CRT0_O) | $(TARGET)
-	$(CC) $(LDFLAGS) -o $$@ $$^
+	$(CC) $(LDFLAGS) -o $$@ $(call prog_objs,$(1)) $(LIB_O) $(CRT0_O)
 endef
 
-$(foreach app,$(APPS),$(eval $(call app_rules,$(app))))
+$(foreach p,$(PROGS),$(eval $(call link_rule,$(p))))
+
+# 用户程序源文件 → target/obj/<保留路径>.o
+# -I. 使 #include "lib/..." 从 user/ 根目录解析
+# -I$(dir $<) 使 #include "cmd.h" 等同目录头文件可从任意子目录引用
+$(TARGET)/obj/%.o: %.c | $(TARGET)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -I$(dir $<) -c -o $@ $<
 
 $(LIB_O): $(LIB_OBJS) | $(TARGET)
 	$(LD) -r -o $@ $^

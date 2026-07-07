@@ -83,4 +83,8 @@ impl crate::process::context::TrapContext for TrapContext {
         self.x[4] = tls_base.inner();
         self
     }
+
+    fn set_return_value(&mut self, return_value: usize) {
+        self.x[10] = return_value;
+    }
 }

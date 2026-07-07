@@ -1,6 +1,6 @@
 #include "cmd.h"
-#include "../lib/stdlib.h"
-#include "../lib/string.h"
+#include "lib/stdlib.h"
+#include "lib/string.h"
 
 struct cmd *execcmd(void) {
   struct execcmd *cmd;
