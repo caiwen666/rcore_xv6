@@ -1,11 +1,7 @@
 use alloc::{string::String, vec::Vec};
 use syscall_macros::syscall;
 
-use crate::{
-    error::SystemError,
-    mm::{address::VirtAddr, mem_space::MemoryPermission},
-    process::ProcessManager,
-};
+use crate::{error::SystemError, mm::address::VirtAddr, process::ProcessManager};
 
 #[syscall(name = "SYS_GETCWD", id = 4)]
 fn sys_getcwd(args: [usize; 6]) -> Result<usize, SystemError> {
@@ -40,13 +36,7 @@ fn sys_getcwd(args: [usize; 6]) -> Result<usize, SystemError> {
 
     let inner = process.inner();
     let memory_space = inner.memory_space.as_ref().unwrap();
-    let permission = memory_space.check_permission(path_addr, path_addr + path.len() + 1)?;
-    if !permission.contains(MemoryPermission::UserAccessible)
-        || !permission.contains(MemoryPermission::Writable)
-    {
-        return Err(SystemError::EFAULT);
-    }
-    memory_space.copyout_str(path_addr, path);
+    memory_space.copyout_str(path_addr, path)?;
 
     Ok(args[0])
 }

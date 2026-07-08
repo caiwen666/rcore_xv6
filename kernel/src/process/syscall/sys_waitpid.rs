@@ -1,15 +1,11 @@
-use crate::{
-    error::SystemError,
-    mm::{address::VirtAddr, mem_space::MemoryPermission},
-    process::ProcessManager,
-};
+use crate::{error::SystemError, mm::address::VirtAddr, process::ProcessManager};
 use syscall_macros::syscall;
 
 #[syscall(name = "SYS_WAITPID", id = 8)]
 fn sys_waitpid(args: [usize; 6]) -> Result<usize, SystemError> {
     let pid = args[0];
     // 32 位整数指针
-    let status_ptr = args[1];
+    let status_ptr = VirtAddr::new(args[1]);
     let non_blocking = args[2] != 0;
     let process = ProcessManager::current_process();
     let process_inner = process.inner();
@@ -46,23 +42,12 @@ fn sys_waitpid(args: [usize; 6]) -> Result<usize, SystemError> {
     } else {
         process.wait_queue.wait_until(try_wait, true)?
     };
-    if status_ptr != 0 {
+    if !status_ptr.is_null() {
         let process_inner = process.inner();
         let memory_space = process_inner.memory_space.as_ref().unwrap();
-        // 为了防止 TOCTOU 问题，所以这里是在要写入数据的时候进行权限的检查
-        // 如果检查失败的话，我们已经成功取出一个已经退出的进程的返回值了，这意味着这个返回值可能会丢失，
-        // 但我们不去做回滚什么的了，反正 Linux 也是这么干的。
-        let ptr_permission = memory_space
-            .check_permission(VirtAddr::new(status_ptr), VirtAddr::new(status_ptr + 4))?;
-        if !ptr_permission.contains(MemoryPermission::UserAccessible)
-            || !ptr_permission.contains(MemoryPermission::Writable)
-        {
-            return Err(SystemError::EFAULT);
-        }
-        memory_space.copyout(
-            VirtAddr::new(status_ptr),
-            (exited_code as u32).to_le_bytes().as_slice(),
-        );
+        // 如果这里 copyout 失败的话，我们已经成功取出一个已经退出的进程的返回值了，
+        // 这意味着这个返回值可能会丢失，但我们不去做回滚什么的了，反正 Linux 也是这么干的。
+        memory_space.copyout(status_ptr, exited_code as u32)?;
     }
     Ok(exited_pid)
 }
