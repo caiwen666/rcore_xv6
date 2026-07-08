@@ -3,7 +3,7 @@ use syscall_macros::syscall;
 
 use crate::{
     error::SystemError,
-    mm::{address::VirtAddr, mem_space::MemoryPermission},
+    mm::address::VirtAddr,
     process::ProcessManager,
 };
 
@@ -18,15 +18,9 @@ fn sys_write(args: [usize; 6]) -> Result<usize, SystemError> {
     let process = ProcessManager::current_process();
     let inner = process.inner();
     let file = inner.fd_table.get(fd).cloned().ok_or(SystemError::EBADF)?;
-    let memory_space = inner.memory_space.as_ref().unwrap();
-    let permission = memory_space.check_permission(buf, buf + len)?;
-    if !permission.contains(MemoryPermission::UserAccessible)
-        || !permission.contains(MemoryPermission::Readable)
-    {
-        return Err(SystemError::EFAULT);
-    }
     let mut kernel_buf = vec![0; len];
-    memory_space.copyin(buf, &mut kernel_buf);
+    let memory_space = inner.memory_space.as_ref().unwrap();
+    memory_space.copyin_bytes(buf, &mut kernel_buf)?;
     drop(inner);
     file.write(&kernel_buf)
 }

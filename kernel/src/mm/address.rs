@@ -86,6 +86,10 @@ impl VirtAddr {
     pub fn inner(&self) -> usize {
         self.0
     }
+
+    pub const fn is_null(&self) -> bool {
+        self.0 == 0
+    }
 }
 
 impl Add<usize> for VirtAddr {

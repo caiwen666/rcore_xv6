@@ -3,7 +3,7 @@ use syscall_macros::syscall;
 use crate::{
     error::SystemError,
     fs::vfs::{interface::FileType, lookup},
-    mm::{address::VirtAddr, mem_space::MemoryPermission},
+    mm::address::VirtAddr,
     process::ProcessManager,
 };
 
@@ -18,12 +18,6 @@ fn sys_chdir(args: [usize; 6]) -> Result<usize, SystemError> {
     let path = memory_space.copyin_str(path_addr, MAXPATH)?;
     if path.is_empty() {
         return Err(SystemError::EINVAL);
-    }
-    let permission = memory_space.check_permission(path_addr, path_addr + path.len())?;
-    if !permission.contains(MemoryPermission::UserAccessible)
-        || !permission.contains(MemoryPermission::Readable)
-    {
-        return Err(SystemError::EFAULT);
     }
     drop(inner);
 
