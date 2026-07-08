@@ -1,11 +1,7 @@
 use alloc::{string::String, vec::Vec};
 use syscall_macros::syscall;
 
-use crate::{
-    error::SystemError,
-    mm::address::VirtAddr,
-    process::ProcessManager,
-};
+use crate::{error::SystemError, mm::address::VirtAddr, process::ProcessManager};
 
 #[syscall(name = "SYS_GETCWD", id = 4)]
 fn sys_getcwd(args: [usize; 6]) -> Result<usize, SystemError> {

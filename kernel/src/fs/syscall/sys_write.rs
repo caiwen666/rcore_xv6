@@ -1,11 +1,7 @@
 use alloc::vec;
 use syscall_macros::syscall;
 
-use crate::{
-    error::SystemError,
-    mm::address::VirtAddr,
-    process::ProcessManager,
-};
+use crate::{error::SystemError, mm::address::VirtAddr, process::ProcessManager};
 
 #[syscall(name = "SYS_WRITE", id = 0)]
 fn sys_write(args: [usize; 6]) -> Result<usize, SystemError> {

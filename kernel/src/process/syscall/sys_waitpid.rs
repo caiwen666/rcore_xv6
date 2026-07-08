@@ -1,8 +1,4 @@
-use crate::{
-    error::SystemError,
-    mm::address::VirtAddr,
-    process::ProcessManager,
-};
+use crate::{error::SystemError, mm::address::VirtAddr, process::ProcessManager};
 use syscall_macros::syscall;
 
 #[syscall(name = "SYS_WAITPID", id = 8)]
