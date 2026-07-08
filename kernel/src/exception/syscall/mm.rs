@@ -13,6 +13,44 @@ use alloc::vec;
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 impl MemorySpace {
+    /// 检查地址空间从 `from` 到 `to`（左闭右开）这个区间内所有页表项权限的交集。
+    /// 如果这个区间存在未映射的部分，则返回 None。
+    ///
+    /// # Panics
+    ///
+    /// 如果 `from` 大于等于 `to`，则 panic
+    ///
+    /// # Errors
+    ///
+    /// - [SystemError::EFAULT] 如果区间内存在未映射的内存区域，则抛出该错误
+    pub fn check_permission(
+        &self,
+        from: VirtAddr,
+        to: VirtAddr,
+    ) -> Result<MemoryPermission, SystemError> {
+        assert!(
+            from < to,
+            "from must be less than to, got from = {:?}, to = {:?}",
+            from,
+            to
+        );
+
+        let mut permission = None;
+        let mut vaddr = from;
+
+        for block in BlockIterator::new(MMArch::PAGE_SIZE, from.inner(), to.inner() - from.inner())
+        {
+            let (_, page_permission) = self.translate_vaddr(vaddr).ok_or(SystemError::EFAULT)?;
+            vaddr += block.size();
+            let Some(permission) = permission.as_mut() else {
+                permission = Some(page_permission);
+                continue;
+            };
+            *permission &= page_permission;
+        }
+
+        Ok(permission.unwrap())
+    }
     /// 将内存空间中虚拟地址为 `vaddr` 处开始的数据拷贝到 `buf` 中
     ///
     /// # Errors
@@ -24,21 +62,22 @@ impl MemorySpace {
         if buf.is_empty() {
             return Ok(());
         }
+        // 先整个检查一遍，然后再写，不能边写边检查，否则如果后面检查出错的话就会是只写了一半了
+        let permission = self.check_permission(vaddr, vaddr + buf.len())?;
+        if !permission.contains(MemoryPermission::UserAccessible)
+            || !permission.contains(MemoryPermission::Readable)
+        {
+            return Err(SystemError::EFAULT);
+        }
         let mut pos = 0;
         for block in BlockIterator::new(MMArch::PAGE_SIZE, vaddr.inner(), buf.len()) {
-            let (paddr, permission) = self.translate_vaddr(vaddr).ok_or(SystemError::EFAULT)?;
-            if !permission.contains(MemoryPermission::UserAccessible)
-                || !permission.contains(MemoryPermission::Readable)
-            {
-                return Err(SystemError::EFAULT);
-            }
+            let (paddr, _) = self.translate_vaddr(vaddr).ok_or(SystemError::EFAULT)?;
             buf[pos..pos + block.size()].copy_from_slice(paddr.as_slice(block.size()));
             vaddr += block.size();
             pos += block.size();
         }
         Ok(())
     }
-
     /// 将 `buf` 中的数据拷贝到内存空间中虚拟地址为 `vaddr` 处开始的位置
     ///
     /// # Errors
@@ -50,14 +89,16 @@ impl MemorySpace {
         if buf.is_empty() {
             return Ok(());
         }
+        // 先整个检查一遍，然后再写，不能边写边检查，否则如果后面检查出错的话就会是只写了一半了
+        let permission = self.check_permission(vaddr, vaddr + buf.len())?;
+        if !permission.contains(MemoryPermission::UserAccessible)
+            || !permission.contains(MemoryPermission::Writable)
+        {
+            return Err(SystemError::EFAULT);
+        }
         let mut pos = 0;
         for block in BlockIterator::new(MMArch::PAGE_SIZE, vaddr.inner(), buf.len()) {
-            let (paddr, permission) = self.translate_vaddr(vaddr).ok_or(SystemError::EFAULT)?;
-            if !permission.contains(MemoryPermission::UserAccessible)
-                || !permission.contains(MemoryPermission::Writable)
-            {
-                return Err(SystemError::EFAULT);
-            }
+            let (paddr, _) = self.translate_vaddr(vaddr).ok_or(SystemError::EFAULT)?;
             paddr
                 .as_slice_mut(block.size())
                 .copy_from_slice(&buf[pos..pos + block.size()]);
