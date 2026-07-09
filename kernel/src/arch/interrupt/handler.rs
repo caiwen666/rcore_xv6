@@ -91,20 +91,23 @@ unsafe extern "C" fn user_trap_handler() {
         scause::Trap::Exception(code) => match Exception::from(code) {
             // 系统调用
             Exception::UserEnvCall => {
-                let trap_context = unsafe { current_task.trap_context() };
-                trap_context.sepc += 4;
-
-                // a7 存放 syscall id
-                let syscall_id = trap_context.x[17];
-                // a0-a5 存放参数
-                let args = [
-                    trap_context.x[10],
-                    trap_context.x[11],
-                    trap_context.x[12],
-                    trap_context.x[13],
-                    trap_context.x[14],
-                    trap_context.x[15],
-                ];
+                let (syscall_id, args) = unsafe {
+                    current_task.with_trap_context(move |trap_context| {
+                        // a7 存放 syscall id
+                        let syscall_id = trap_context.x[17];
+                        // a0-a5 存放参数
+                        let args = [
+                            trap_context.x[10],
+                            trap_context.x[11],
+                            trap_context.x[12],
+                            trap_context.x[13],
+                            trap_context.x[14],
+                            trap_context.x[15],
+                        ];
+                        trap_context.sepc += 4;
+                        (syscall_id, args)
+                    })
+                };
 
                 if let Some(handle) = syscall_table().get(syscall_id) {
                     // 系统调用可能耗时较长，这里开中断
@@ -117,11 +120,17 @@ unsafe extern "C" fn user_trap_handler() {
                                     syscall_id, result
                                 );
                             }
-                            trap_context.x[10] = result;
+                            unsafe {
+                                current_task.with_trap_context(move |trap_context| {
+                                    trap_context.x[10] = result;
+                                });
+                            }
                         }
-                        Err(error) => {
-                            trap_context.x[10] = error.posix_errno() as usize;
-                        }
+                        Err(error) => unsafe {
+                            current_task.with_trap_context(move |trap_context| {
+                                trap_context.x[10] = error.posix_errno() as usize;
+                            });
+                        },
                     }
                 } else {
                     println!(

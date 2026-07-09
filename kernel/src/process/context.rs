@@ -31,6 +31,8 @@ pub trait TrapContext: Clone {
     fn set_tls_base(&mut self, tls_base: VirtAddr) -> &mut Self;
     /// 设置返回值
     fn set_return_value(&mut self, return_value: usize) -> &mut Self;
+    /// 设置内核栈地址
+    fn set_kernel_sp(&mut self, kernel_sp: VirtAddr) -> &mut Self;
 }
 
 pub type ArchTrapContext = <IrqArch as InterruptArch>::TrapContext;

@@ -88,4 +88,9 @@ impl crate::process::context::TrapContext for TrapContext {
         self.x[10] = return_value;
         self
     }
+
+    fn set_kernel_sp(&mut self, kernel_sp: VirtAddr) -> &mut Self {
+        self.kernel_sp = kernel_sp.inner();
+        self
+    }
 }

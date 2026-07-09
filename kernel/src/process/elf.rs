@@ -29,7 +29,17 @@ pub fn load_elf(elf_data: &[u8]) -> Result<(MemorySpace, Option<usize>, VirtAddr
     // 解析 tls
     let tls_size = elf
         .program_iter()
-        .find(|ph| ph.get_type().unwrap() == Type::Tls)
+        .find_map(|ph| match ph.get_type() {
+            Ok(ph_type) => {
+                if ph_type == Type::Tls {
+                    Some(Ok(ph))
+                } else {
+                    None
+                }
+            }
+            Err(_) => Some(Err(SystemError::ENOEXEC)),
+        })
+        .transpose()?
         .map(|ph| (ph.mem_size() as usize).div_ceil(MMArch::PAGE_SIZE) * MMArch::PAGE_SIZE);
     let mut memory_space = MemorySpace::create();
     for ph in elf.program_iter() {
@@ -59,6 +69,9 @@ pub fn load_elf(elf_data: &[u8]) -> Result<(MemorySpace, Option<usize>, VirtAddr
             MemoryAreaType::Private,
             "elf",
         );
+        if elf.input.len() < (ph.offset() + ph.file_size()) as usize {
+            return Err(SystemError::ENOEXEC);
+        }
         area.write_data(
             offset,
             &elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize],

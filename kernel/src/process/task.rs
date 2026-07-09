@@ -83,15 +83,25 @@ impl TaskControlBlock {
         self.process.clone()
     }
 
+    /// 访问当前线程的 trap 上下文
+    ///
     /// # Safety
     ///
-    /// 必须确保当前 task 没有运行（刚被创建，还没放入调度队列中），
-    /// 或是正在运行，调用该函数的 CPU 正在调度该 task
-    #[expect(clippy::mut_from_ref)]
-    pub unsafe fn trap_context(&self) -> &mut ArchTrapContext {
-        (unsafe { *self.trap_context_paddr.get() })
+    /// - 必须对一个刚刚构造出来，尚未放入调度队列的线程调用该函数。或是对当前 CPU 上正在运行的线程调用该函数。
+    /// - f 内不要再调用 with_trap_context 函数
+    pub unsafe fn with_trap_context<F, R>(&self, f: F) -> R
+    where
+        F: 'static + FnOnce(&mut ArchTrapContext) -> R,
+        R: 'static,
+    {
+        // SAFETY: 由于我们约定了当前线程被刚刚构造出来，或是就是当前 CPU 上正在运行的线程，所以此时只会有一个线程
+        // 在访问 trap 上下文。
+        // 同时通过约束 f 本身不能捕获任何引用，也不能将任何引用从闭包中传出，f 内不要再调用 with_trap_context 函数，
+        // 确保了单线程本身对 trap 上下文的访问是安全的。
+        let trap_context = unsafe { *self.trap_context_paddr.get() }
             .unwrap()
-            .get_mut()
+            .get_mut::<ArchTrapContext>();
+        f(trap_context)
     }
 }
 
@@ -215,12 +225,14 @@ impl TaskControlBlock {
         let tls_base = process.tls_vaddr(id).unwrap_or(VirtAddr::new(0));
         // 写入 trap 上下文
         unsafe {
-            let mut trap_context = ArchTrapContext::new(kstack_high);
-            trap_context
-                .set_ustack(ustack_high)
-                .set_pc(entry)
-                .set_tls_base(tls_base);
-            *task.trap_context() = trap_context;
+            task.with_trap_context(move |trap_context| {
+                let mut new_trap_context = ArchTrapContext::new(kstack_high);
+                new_trap_context
+                    .set_ustack(ustack_high)
+                    .set_pc(entry)
+                    .set_tls_base(tls_base);
+                *trap_context = new_trap_context;
+            });
         }
         inner.tasks.push(Arc::downgrade(&task));
 
@@ -254,7 +266,9 @@ impl TaskControlBlock {
         // trap 上下文页从父进程复制而来，其中的 kernel_sp 仍指向父进程内核栈，
         // 子进程陷入内核时必须使用自己的内核栈。
         unsafe {
-            task.trap_context().kernel_sp = kstack_high.inner();
+            task.with_trap_context(move |trap_context| {
+                trap_context.set_kernel_sp(kstack_high);
+            });
         }
         process_inner.tasks.insert(self.id, Arc::downgrade(&task));
         task

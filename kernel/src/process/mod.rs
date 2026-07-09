@@ -157,9 +157,11 @@ impl ProcessManager {
         // 初始进程不传递参数
         unsafe {
             let (_, ustack_high) = process.ustack_vaddr(task.id);
-            // 初始时 ustack 已经被清零了，所以这里直接设置栈顶指针即可
-            task.trap_context()
-                .set_ustack(ustack_high - core::mem::size_of::<usize>());
+            task.with_trap_context(move |trap_context| {
+                // 初始时 ustack 已经被清零了，所以这里直接设置栈顶指针即可
+                // 为了让栈指针 16 字节对齐，这里直接减去 16
+                trap_context.set_ustack(ustack_high - 16);
+            });
         }
         TaskScheduler::push(task);
         Ok(())

@@ -13,10 +13,12 @@ use syscall_macros::syscall;
 
 #[syscall(name = "SYS_FORK", id = 6)]
 fn sys_fork(_args: [usize; 6]) -> Result<usize, SystemError> {
-    let task = ProcessManager::current_task();
+    let current_task = ProcessManager::current_task();
     // 先把返回值清零，这样在 fork 后，子进程会返回 0
     unsafe {
-        task.trap_context().set_return_value(0);
+        current_task.with_trap_context(move |trap_context| {
+            trap_context.set_return_value(0);
+        });
     }
     let process = ProcessManager::current_process();
     let mut process_inner = process.inner();
@@ -48,11 +50,10 @@ fn sys_fork(_args: [usize; 6]) -> Result<usize, SystemError> {
             "process_inner",
         ),
     });
-    let current_task = ProcessManager::current_task();
-    let task = current_task.fork(new_process.clone());
+    let new_task = current_task.fork(new_process.clone());
     process_inner
         .children
         .insert(new_process.pid, new_process.clone());
-    TaskScheduler::push(task);
+    TaskScheduler::push(new_task);
     Ok(new_process.pid)
 }

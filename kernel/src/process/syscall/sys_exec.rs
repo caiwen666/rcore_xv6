@@ -59,8 +59,9 @@ fn sys_exec(args: [usize; 6]) -> Result<usize, SystemError> {
     let (memory_space, tls_size, entry_point) = load_elf(elf_data.as_slice())?;
     // 替换掉当前的内存空间
     process_inner.memory_space = Some(memory_space);
+    // 重新设置堆
+    process_inner.heap_size = 0;
     let memory_space = process_inner.memory_space.as_mut().unwrap();
-    // 建立堆
     memory_space.push(MemoryArea::new(
         VirtAddr::new(USER_HEAP_START),
         0,
@@ -110,12 +111,14 @@ fn sys_exec(args: [usize; 6]) -> Result<usize, SystemError> {
         // 修改 trap 上下文的物理地址
         *task.trap_context_paddr.get() = Some(trap_context_paddr);
         // 重新设置 trap 上下文
-        let mut trap_context = ArchTrapContext::new(kstack_high);
-        trap_context
-            .set_ustack(ustack_ptr)
-            .set_pc(entry_point)
-            .set_tls_base(tls_base);
-        *task.trap_context() = trap_context;
+        task.with_trap_context(move |trap_context| {
+            let mut new_trap_context = ArchTrapContext::new(kstack_high);
+            new_trap_context
+                .set_ustack(ustack_ptr)
+                .set_pc(entry_point)
+                .set_tls_base(tls_base);
+            *trap_context = new_trap_context;
+        });
     }
     Ok(0)
 }
