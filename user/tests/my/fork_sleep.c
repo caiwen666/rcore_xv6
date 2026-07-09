@@ -1,4 +1,6 @@
 #include "lib/stdio.h"
+#include "lib/stdlib.h"
+#include "lib/string.h"
 #include "lib/sys/process.h"
 
 int tag = 0;
@@ -9,10 +11,18 @@ int main() {
   int pid = fork();
   if (pid == 0) {
     while (tag != 5) {
-      int interval = 1000 * 1000; // 1 seconds
       printf("hello from child, tag: %d\n", tag);
       tag++;
-      sleep(interval);
+      char *args[] = {"3", NULL};
+      int pid = fork();
+      if (pid == 0) {
+        if (execv("/root/bin/sleep", args) < 0) {
+          printf("execv failed: %s\n", strerror(errno));
+          exit(1);
+        }
+      } else {
+        waitpid(pid, NULL, 0);
+      }
     }
   } else {
     printf("child pid: %d, waiting child to exit\n", pid);
@@ -22,8 +32,16 @@ int main() {
     while (tag != 5) {
       printf("hello from parent, tag: %d\n", tag);
       tag++;
-      int interval = 1000 * 1000; // 1 second
-      sleep(interval);
+      char *args[] = {"1", NULL};
+      int pid = fork();
+      if (pid == 0) {
+        if (execv("/root/bin/sleep", args) < 0) {
+          printf("execv failed: %s\n", strerror(errno));
+          exit(1);
+        }
+      } else {
+        waitpid(pid, NULL, 0);
+      }
     }
   }
   return tag;

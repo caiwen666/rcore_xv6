@@ -1,5 +1,6 @@
 pub mod context;
 pub mod cpu;
+pub mod elf;
 pub mod kthread;
 pub mod mm;
 pub mod schedule;
@@ -8,20 +9,20 @@ mod syscall;
 pub mod task;
 
 use crate::{
-    arch::{IrqArch, MMArch},
+    arch::IrqArch,
     driver::{self, sifive_test::ShutdownReason},
     error::SystemError,
     exception::InterruptArch,
     fs::{
         ROOT_FS,
         file::File,
-        vfs::{VirtualIndexNode, lookup},
+        vfs::{VirtualIndexNode, interface::FileType, lookup},
     },
-    mm::{MemoryManagementArch, address::VirtAddr, mem_space::MemorySpace},
+    mm::mem_space::MemorySpace,
     println,
     process::{
-        cpu::CPUManager, kthread::spawn_kthread, schedule::TaskScheduler, sleep::WaitQueue,
-        task::TaskControlBlock,
+        context::TrapContext, cpu::CPUManager, elf::load_elf, kthread::spawn_kthread,
+        schedule::TaskScheduler, sleep::WaitQueue, task::TaskControlBlock,
     },
     sync::spin::{SpinMutex, SpinMutexGuard},
     utils::RecycleAllocator,
@@ -29,10 +30,13 @@ use crate::{
 use alloc::{
     collections::btree_map::BTreeMap,
     sync::{Arc, Weak},
+    vec,
 };
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::{
+    cell::SyncUnsafeCell,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use lazy_static::lazy_static;
-use xmas_elf::{ElfFile, program::Type};
 
 lazy_static! {
     static ref KERNEL_PROCESS: Arc<ProcessControlBlock> = ProcessManager::init_kernel_process();
@@ -55,7 +59,7 @@ impl ProcessManager {
         Arc::new(ProcessControlBlock {
             // 内核进程的 pid 固定为 0
             pid: 0,
-            tls_size: None,
+            tls_size: SyncUnsafeCell::new(None),
             wait_queue: WaitQueue::new(),
             inner: SpinMutex::new(
                 ProcessControlBlockInner {
@@ -101,25 +105,33 @@ impl ProcessManager {
 }
 
 impl ProcessManager {
-    /// 根据 elf 文件创建一个进程，并为进程启动一个线程，并将进程加入到调度循环中。
-    ///
-    /// # Panics
-    ///
-    /// 如果 elf 文件解析失败，则 panic
-    pub fn new_elf_process(elf_data: &[u8]) -> Arc<ProcessControlBlock> {
-        let elf =
-            ElfFile::new(elf_data).unwrap_or_else(|e| panic!("Failed to parse elf file: {}", e));
-        let memory_space = MemorySpace::from_elf(&elf);
-        // 解析 tls
-        let tls_size = elf
-            .program_iter()
-            .find(|ph| ph.get_type().unwrap() == Type::Tls)
-            .map(|ph| (ph.mem_size() as usize).div_ceil(MMArch::PAGE_SIZE) * MMArch::PAGE_SIZE);
-        // 默认把工作目录设在 /root
-        let cwd = lookup(ROOT_FS.root(), "root").unwrap();
-        let process = Arc::new(ProcessControlBlock {
-            pid: PID_ALLOCATOR.fetch_add(1, Ordering::Relaxed),
-            tls_size,
+    /// 注册一个进程
+    pub fn register<F>(f: F) -> Arc<ProcessControlBlock>
+    where
+        F: FnOnce(usize) -> ProcessControlBlock,
+    {
+        let pid = PID_ALLOCATOR.fetch_add(1, Ordering::Relaxed);
+        let process = Arc::new(f(pid));
+        PROCESS_TABLE.lock().insert(pid, Arc::downgrade(&process));
+        process
+    }
+
+    /// 启动初始进程
+    pub fn init_process(path: &str) -> Result<(), SystemError> {
+        let file = lookup(ROOT_FS.root(), path).ok_or(SystemError::ENOENT)?;
+        if file.metadata().file_type != FileType::File {
+            return Err(SystemError::EISDIR);
+        }
+        let mut elf_data = vec![0u8; file.metadata().size];
+        file.read_at(0, &mut elf_data);
+        let (memory_space, tls_size, entry_point) = load_elf(elf_data.as_slice())?;
+        let cwd = lookup(ROOT_FS.root(), "root").ok_or(SystemError::ENOENT)?;
+        if cwd.metadata().file_type != FileType::Directory {
+            return Err(SystemError::ENOTDIR);
+        }
+        let process = ProcessManager::register(|pid| ProcessControlBlock {
+            pid,
+            tls_size: SyncUnsafeCell::new(tls_size),
             wait_queue: WaitQueue::new(),
             inner: SpinMutex::new(
                 ProcessControlBlockInner {
@@ -140,66 +152,19 @@ impl ProcessManager {
         process.open_file("stdout");
         // 标准错误流沿用标准输出
         process.open_file("stdout");
-        let task = TaskControlBlock::new(
-            process.clone(),
-            VirtAddr::new(elf.header.pt2.entry_point() as usize),
-        );
 
-        TaskScheduler::push(task);
-        PROCESS_TABLE
-            .lock()
-            .insert(process.pid, Arc::downgrade(&process));
-        process
-    }
-
-    /// fork 当前进程
-    ///
-    /// **会对当前进程进行加锁**
-    ///
-    /// # Errors
-    ///
-    /// - [SystemError::EPERM] 如果当前进程有多个线程则抛出该错误，目前出于简单起见只允许单线程的进程 fork
-    pub fn fork() -> Result<Arc<ProcessControlBlock>, SystemError> {
-        let process = ProcessManager::current_process();
-        let mut process_inner = process.inner();
-        if !matches!(process_inner.status, ProcessStatus::Running) {
-            // 如果当前进程已经退出，则直接抛出错误，这样当前系统调用会尽快返回，并在返回用户态前结束
-            // 随便返回一个错误，因为什么错误其实都无所谓了，我们的目标是让系统调用尽快结束
-            return Err(SystemError::EPERM);
+        let task = TaskControlBlock::new(process.clone(), entry_point);
+        // 初始进程不传递参数
+        unsafe {
+            let (_, ustack_high) = process.ustack_vaddr(task.id);
+            task.with_trap_context(move |trap_context| {
+                // 初始时 ustack 已经被清零了，所以这里直接设置栈顶指针即可
+                // 为了让栈指针 16 字节对齐，这里直接减去 16
+                trap_context.set_ustack(ustack_high - 16);
+            });
         }
-        if process_inner.tasks.len() != 1 {
-            return Err(SystemError::EPERM);
-        }
-        let new_memory_space = process_inner.memory_space.as_ref().unwrap().fork();
-        let new_process = Arc::new(ProcessControlBlock {
-            pid: PID_ALLOCATOR.fetch_add(1, Ordering::Relaxed),
-            tls_size: process.tls_size,
-            wait_queue: WaitQueue::new(),
-            inner: SpinMutex::new(
-                ProcessControlBlockInner {
-                    status: ProcessStatus::Running,
-                    memory_space: Some(new_memory_space),
-                    tasks: RecycleAllocator::new(),
-                    cwd: process_inner.cwd.clone(),
-                    fd_table: process_inner.fd_table.clone(),
-                    heap_size: process_inner.heap_size,
-                    parent: Some(process.clone()),
-                    children: BTreeMap::new(),
-                    exited_children: BTreeMap::new(),
-                },
-                "process_inner",
-            ),
-        });
-        PROCESS_TABLE
-            .lock()
-            .insert(new_process.pid, Arc::downgrade(&new_process));
-        let current_task = ProcessManager::current_task();
-        let task = current_task.fork(new_process.clone());
-        process_inner
-            .children
-            .insert(new_process.pid, new_process.clone());
         TaskScheduler::push(task);
-        Ok(new_process)
+        Ok(())
     }
 }
 
@@ -213,7 +178,9 @@ impl ProcessManager {
 pub struct ProcessControlBlock {
     pub pid: usize,
     /// 进程需要的 tls 区域的大小，按页大小对齐
-    pub tls_size: Option<usize>,
+    ///
+    /// 这里用 [SyncUnsafeCell] 试图提供一种内部可变性，因为我们在 exec 时需要修改这个值
+    tls_size: SyncUnsafeCell<Option<usize>>,
     /// 用于等待子进程
     pub wait_queue: WaitQueue,
     inner: SpinMutex<ProcessControlBlockInner>,
@@ -261,6 +228,10 @@ impl ProcessControlBlock {
     pub fn set_cwd(&self, cwd: VirtualIndexNode) {
         let mut inner = self.inner();
         inner.cwd = Some(cwd);
+    }
+
+    pub fn tls_size(&self) -> Option<usize> {
+        unsafe { *self.tls_size.get() }
     }
 }
 

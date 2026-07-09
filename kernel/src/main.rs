@@ -5,6 +5,7 @@
 #![feature(negative_impls)]
 #![feature(likely_unlikely)]
 #![feature(never_type)]
+#![feature(sync_unsafe_cell)]
 
 use crate::{
     arch::{IrqArch, MMArch},
@@ -12,7 +13,6 @@ use crate::{
     exception::{InterruptArch, syscall::init_syscall_table},
     fs::{
         Ext2FileSystem, ROOT_FS,
-        file::FileSeekMethod,
         vfs::{VirtualFileSystem, lookup},
     },
     mm::{KERNEL_SPACE, MemoryManagementArch},
@@ -93,12 +93,5 @@ pub fn kthread_main() {
     let ext2_mountpoint = lookup(ROOT_FS.root(), "root").unwrap();
     ext2_mountpoint.mount(VirtualFileSystem::new(Ext2FileSystem::new(VIRTIO0.clone())));
 
-    // 启动第一个进程
-    let fd = process.open_file("/root/bin/sh").unwrap();
-    let file = process.get_file(fd).unwrap();
-    let file_len = file.seek(FileSeekMethod::End(0)).unwrap();
-    file.seek(FileSeekMethod::Absolute(0)).unwrap();
-    let mut file_buf = vec![0u8; file_len];
-    file.read(&mut file_buf).unwrap();
-    ProcessManager::new_elf_process(file_buf.as_slice());
+    ProcessManager::init_process("/root/bin/sh").unwrap();
 }

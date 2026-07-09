@@ -166,7 +166,6 @@ impl MemorySpace {
     /// - [SystemError::EFAULT] 如果内存空间中对应的区域没有映射
     ///   或是没有 [MemoryPermission::UserAccessible] 和 [MemoryPermission::Readable] 权限，
     ///   则抛出该错误
-    #[expect(unused)]
     pub fn copyin<T: FromBytes>(&self, vaddr: VirtAddr) -> Result<T, SystemError> {
         let mut buf = vec![0u8; core::mem::size_of::<T>()];
         self.copyin_bytes(vaddr, &mut buf)?;

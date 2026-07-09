@@ -7,9 +7,9 @@ use crate::{
     process::ProcessControlBlock,
 };
 
+#[expect(unused)]
 pub enum FileSeekMethod {
     Absolute(usize),
-    #[expect(unused)]
     Relative(isize),
     End(isize),
 }
@@ -17,6 +17,7 @@ pub enum FileSeekMethod {
 pub trait File: Send + Sync {
     fn read(&self, buf: &mut [u8]) -> Result<usize, SystemError>;
     fn write(&self, buf: &[u8]) -> Result<usize, SystemError>;
+    #[expect(unused)]
     fn seek(&self, method: FileSeekMethod) -> Result<usize, SystemError>;
 }
 
@@ -40,6 +41,7 @@ impl ProcessControlBlock {
     }
 
     /// **该函数会对 inner 加锁**
+    #[expect(unused)]
     pub fn get_file(&self, fd: u64) -> Option<Arc<dyn File>> {
         let inner = self.inner();
         inner.fd_table.get(fd as usize).cloned()

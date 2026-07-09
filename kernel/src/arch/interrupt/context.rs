@@ -69,22 +69,28 @@ impl crate::process::context::TrapContext for TrapContext {
         VirtAddr::new(self.sepc)
     }
 
-    fn set_pc(mut self, pc: VirtAddr) -> Self {
+    fn set_pc(&mut self, pc: VirtAddr) -> &mut Self {
         self.sepc = pc.inner();
         self
     }
 
-    fn set_ustack(mut self, ustack: VirtAddr) -> Self {
+    fn set_ustack(&mut self, ustack: VirtAddr) -> &mut Self {
         self.x[2] = ustack.inner();
         self
     }
 
-    fn set_tls_base(mut self, tls_base: VirtAddr) -> Self {
+    fn set_tls_base(&mut self, tls_base: VirtAddr) -> &mut Self {
         self.x[4] = tls_base.inner();
         self
     }
 
-    fn set_return_value(&mut self, return_value: usize) {
+    fn set_return_value(&mut self, return_value: usize) -> &mut Self {
         self.x[10] = return_value;
+        self
+    }
+
+    fn set_kernel_sp(&mut self, kernel_sp: VirtAddr) -> &mut Self {
+        self.kernel_sp = kernel_sp.inner();
+        self
     }
 }

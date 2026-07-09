@@ -1,9 +1,11 @@
+use core::cell::SyncUnsafeCell;
+
 use crate::{
     arch::MMArch,
     mm::{
         MemoryManagementArch,
         address::{PhysAddr, VirtAddr},
-        mem_space::{MemoryArea, MemoryAreaType, MemoryPermission},
+        mem_space::{MemoryArea, MemoryAreaType, MemoryPermission, MemorySpace},
     },
     process::{
         KERNEL_PROCESS, ProcessControlBlock, ProcessStatus,
@@ -40,8 +42,7 @@ pub enum TaskStatus {
 /// 这确保任务只要还活着就必然存在一个强引用指向它。强引用归零时，任务必然结束并被回收。
 pub struct TaskControlBlock {
     process: Arc<ProcessControlBlock>,
-    #[expect(unused)]
-    kstack: KernelStack,
+    pub(super) kstack: KernelStack,
     pub id: usize,
     /// 内核线程的入口函数
     ///
@@ -51,7 +52,10 @@ pub struct TaskControlBlock {
     pub(super) kthread_entry: KthreadEntryCell,
     inner: SpinMutex<TaskControlBlockInner>,
     /// 内核线程没有 trap 上下文
-    trap_context_paddr: Option<PhysAddr>,
+    ///
+    /// 这里用 [SyncUnsafeCell] 试图提供一种内部可变性，因为我们在 exec 时需要修改 trap 上下文的
+    /// 物理地址
+    pub(super) trap_context_paddr: SyncUnsafeCell<Option<PhysAddr>>,
 }
 
 pub struct TaskControlBlockInner {
@@ -79,8 +83,25 @@ impl TaskControlBlock {
         self.process.clone()
     }
 
-    pub fn trap_context(&self) -> &mut ArchTrapContext {
-        self.trap_context_paddr.unwrap().get_mut()
+    /// 访问当前线程的 trap 上下文
+    ///
+    /// # Safety
+    ///
+    /// - 必须对一个刚刚构造出来，尚未放入调度队列的线程调用该函数。或是对当前 CPU 上正在运行的线程调用该函数。
+    /// - f 内不要再调用 with_trap_context 函数
+    pub unsafe fn with_trap_context<F, R>(&self, f: F) -> R
+    where
+        F: 'static + FnOnce(&mut ArchTrapContext) -> R,
+        R: 'static,
+    {
+        // SAFETY: 由于我们约定了当前线程被刚刚构造出来，或是就是当前 CPU 上正在运行的线程，所以此时只会有一个线程
+        // 在访问 trap 上下文。
+        // 同时通过约束 f 本身不能捕获任何引用，也不能将任何引用从闭包中传出，f 内不要再调用 with_trap_context 函数，
+        // 确保了单线程本身对 trap 上下文的访问是安全的。
+        let trap_context = unsafe { *self.trap_context_paddr.get() }
+            .unwrap()
+            .get_mut::<ArchTrapContext>();
+        f(trap_context)
     }
 }
 
@@ -103,22 +124,27 @@ impl TaskControlBlock {
                 },
                 "task_control_block_inner",
             ),
-            trap_context_paddr: None,
+            trap_context_paddr: SyncUnsafeCell::new(None),
         });
         inner.tasks.push(Arc::downgrade(&task));
         task
     }
 
-    /// 在指定进程下创建线程。线程的默认状态为 [TaskStatus::Ready]。不会自动将线程加入调度器。
-    pub fn new(process: Arc<ProcessControlBlock>, entry: VirtAddr) -> Arc<Self> {
-        let kstack = KernelStackAllocator::alloc();
-        let (_, kstack_high) = kstack.range();
-
-        let mut inner = process.inner();
-        let id = inner.tasks.next_id();
+    /// 将初始化线程内存的代码单独拿出来
+    ///
+    /// 该函数会为线程分配用户栈，trap 上下文，tls 区域，并在 trap 上下文中设置好
+    /// 内核栈栈顶地址，用户栈栈顶地址，tls 基址
+    ///
+    /// # Preconditions
+    ///
+    /// `process` 和 `memory_space` 必须配对，否则会导致未定义行为
+    pub(super) fn init_memory(
+        process: &Arc<ProcessControlBlock>,
+        memory_space: &mut MemorySpace,
+        tid: usize,
+    ) {
         // 分配用户栈
-        let (ustack_low, ustack_high) = process.ustack_vaddr(id);
-        let memory_space = inner.memory_space.as_mut().unwrap();
+        let (ustack_low, ustack_high) = process.ustack_vaddr(tid);
         memory_space.push(MemoryArea::new(
             ustack_low,
             ustack_high - ustack_low,
@@ -130,27 +156,16 @@ impl TaskControlBlock {
         ));
         // 分配 trap 上下文
         memory_space.push(MemoryArea::new(
-            process.trap_context_vaddr(id),
+            process.trap_context_vaddr(tid),
             TRAP_CONTEXT_PAGE_COUNT * MMArch::PAGE_SIZE,
             // 不给 U 权限
             MemoryPermission::Readable | MemoryPermission::Writable,
             MemoryAreaType::Private,
             "trap_context",
         ));
-        // 分配堆
-        memory_space.push(MemoryArea::new(
-            VirtAddr::new(USER_HEAP_START),
-            0,
-            MemoryPermission::Readable
-                | MemoryPermission::Writable
-                | MemoryPermission::UserAccessible,
-            MemoryAreaType::Private,
-            "heap",
-        ));
         // 分配 tls
-        let mut tls_base = VirtAddr::new(0);
-        if let Some(tls_size) = process.tls_size {
-            tls_base = process.tls_vaddr(id).unwrap();
+        if let Some(tls_size) = process.tls_size() {
+            let tls_base = process.tls_vaddr(tid).unwrap();
             memory_space.push(MemoryArea::new(
                 tls_base,
                 tls_size,
@@ -161,6 +176,29 @@ impl TaskControlBlock {
                 "tls",
             ));
         }
+    }
+
+    /// 在指定进程下创建线程。线程的默认状态为 [TaskStatus::Ready]。不会自动将线程加入调度器。
+    pub fn new(process: Arc<ProcessControlBlock>, entry: VirtAddr) -> Arc<Self> {
+        let kstack = KernelStackAllocator::alloc();
+        let (_, kstack_high) = kstack.range();
+
+        let mut inner = process.inner();
+        let id = inner.tasks.next_id();
+        let memory_space = inner.memory_space.as_mut().unwrap();
+        // 分配堆
+        memory_space.push(MemoryArea::new(
+            VirtAddr::new(USER_HEAP_START),
+            0,
+            MemoryPermission::Readable
+                | MemoryPermission::Writable
+                | MemoryPermission::UserAccessible,
+            MemoryAreaType::Private,
+            "heap",
+        ));
+        // 初始化内存
+        Self::init_memory(&process, memory_space, id);
+
         // 拿到 trap 上下文的物理地址
         let (trap_context_paddr, _) = memory_space
             .translate_vaddr(process.trap_context_vaddr(id))
@@ -179,15 +217,23 @@ impl TaskControlBlock {
                 },
                 "task_control_block_inner",
             ),
-            trap_context_paddr: Some(trap_context_paddr),
+            trap_context_paddr: SyncUnsafeCell::new(Some(trap_context_paddr)),
         });
 
+        // 拿到用户栈栈顶地址和 tls 基址
+        let (_, ustack_high) = process.ustack_vaddr(id);
+        let tls_base = process.tls_vaddr(id).unwrap_or(VirtAddr::new(0));
         // 写入 trap 上下文
-        *task.trap_context() = ArchTrapContext::new(kstack_high)
-            .set_ustack(ustack_high)
-            .set_pc(entry)
-            .set_tls_base(tls_base);
-
+        unsafe {
+            task.with_trap_context(move |trap_context| {
+                let mut new_trap_context = ArchTrapContext::new(kstack_high);
+                new_trap_context
+                    .set_ustack(ustack_high)
+                    .set_pc(entry)
+                    .set_tls_base(tls_base);
+                *trap_context = new_trap_context;
+            });
+        }
         inner.tasks.push(Arc::downgrade(&task));
 
         task
@@ -215,11 +261,15 @@ impl TaskControlBlock {
                 },
                 "task_control_block_inner",
             ),
-            trap_context_paddr: Some(trap_context_paddr),
+            trap_context_paddr: SyncUnsafeCell::new(Some(trap_context_paddr)),
         });
         // trap 上下文页从父进程复制而来，其中的 kernel_sp 仍指向父进程内核栈，
         // 子进程陷入内核时必须使用自己的内核栈。
-        task.trap_context().kernel_sp = kstack_high.inner();
+        unsafe {
+            task.with_trap_context(move |trap_context| {
+                trap_context.set_kernel_sp(kstack_high);
+            });
+        }
         process_inner.tasks.insert(self.id, Arc::downgrade(&task));
         task
     }

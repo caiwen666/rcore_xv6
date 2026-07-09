@@ -1,6 +1,8 @@
 #include "cmd.h"
+#include "lib/stdio.h"
 #include "lib/stdlib.h"
 #include "lib/string.h"
+#include "lib/sys/process.h"
 
 struct cmd *execcmd(void) {
   struct execcmd *cmd;
@@ -58,78 +60,82 @@ struct cmd *backcmd(struct cmd *subcmd) {
   return (struct cmd *)cmd;
 }
 
-// Execute cmd.  Never returns.
-// TODO
-// void runcmd(struct cmd *cmd) {
-//   int p[2];
-//   struct backcmd *bcmd;
-//   struct execcmd *ecmd;
-//   struct listcmd *lcmd;
-//   struct pipecmd *pcmd;
-//   struct redircmd *rcmd;
+// Execute cmd.Never returns.
+void runcmd(struct cmd *cmd) {
+  int p[2];
+  struct backcmd *bcmd;
+  struct execcmd *ecmd;
+  struct listcmd *lcmd;
+  struct pipecmd *pcmd;
+  struct redircmd *rcmd;
 
-//   if (cmd == 0)
-//     exit(1);
+  if (cmd == 0)
+    return;
 
-//   switch (cmd->type) {
-//   default:
-//     panic("runcmd");
+  switch (cmd->type) {
+  default:
+    fprintf(STDERR, "runcmd: unknown command type: %d\n", cmd->type);
+    exit(1);
 
-//   case EXEC:
-//     ecmd = (struct execcmd *)cmd;
-//     if (ecmd->argv[0] == 0)
-//       exit(1);
-//     exec(ecmd->argv[0], ecmd->argv);
-//     fprintf(2, "exec %s failed\n", ecmd->argv[0]);
-//     break;
+  case EXEC:
+    ecmd = (struct execcmd *)cmd;
+    if (ecmd->argv[0] == 0)
+      exit(1);
+    exec(ecmd->argv[0], ecmd->argv);
+    fprintf(STDERR, "exec %s failed\n", ecmd->argv[0]);
+    break;
 
-//   case REDIR:
-//     rcmd = (struct redircmd *)cmd;
-//     close(rcmd->fd);
-//     if (open(rcmd->file, rcmd->mode) < 0) {
-//       fprintf(2, "open %s failed\n", rcmd->file);
-//       exit(1);
-//     }
-//     runcmd(rcmd->cmd);
-//     break;
+  case REDIR:
+    fprintf(STDERR, "redircmd: not implemented\n");
+    exit(1);
+    // rcmd = (struct redircmd *)cmd;
+    // close(rcmd->fd);
+    // if (open(rcmd->file, rcmd->mode) < 0) {
+    //   fprintf(2, "open %s failed\n", rcmd->file);
+    //   exit(1);
+    // }
+    // runcmd(rcmd->cmd);
+    break;
 
-//   case LIST:
-//     lcmd = (struct listcmd *)cmd;
-//     if (fork1() == 0)
-//       runcmd(lcmd->left);
-//     wait(0);
-//     runcmd(lcmd->right);
-//     break;
+  case LIST:
+    lcmd = (struct listcmd *)cmd;
+    if (fork() == 0)
+      runcmd(lcmd->left);
+    waitpid(0, NULL, 0);
+    runcmd(lcmd->right);
+    break;
 
-//   case PIPE:
-//     pcmd = (struct pipecmd *)cmd;
-//     if (pipe(p) < 0)
-//       panic("pipe");
-//     if (fork1() == 0) {
-//       close(1);
-//       dup(p[1]);
-//       close(p[0]);
-//       close(p[1]);
-//       runcmd(pcmd->left);
-//     }
-//     if (fork1() == 0) {
-//       close(0);
-//       dup(p[0]);
-//       close(p[0]);
-//       close(p[1]);
-//       runcmd(pcmd->right);
-//     }
-//     close(p[0]);
-//     close(p[1]);
-//     wait(0);
-//     wait(0);
-//     break;
+  case PIPE:
+    fprintf(STDERR, "pipecmd: not implemented\n");
+    exit(1);
+    // pcmd = (struct pipecmd *)cmd;
+    // if (pipe(p) < 0)
+    //   panic("pipe");
+    // if (fork1() == 0) {
+    //   close(1);
+    //   dup(p[1]);
+    //   close(p[0]);
+    //   close(p[1]);
+    //   runcmd(pcmd->left);
+    // }
+    // if (fork1() == 0) {
+    //   close(0);
+    //   dup(p[0]);
+    //   close(p[0]);
+    //   close(p[1]);
+    //   runcmd(pcmd->right);
+    // }
+    // close(p[0]);
+    // close(p[1]);
+    // wait(0);
+    // wait(0);
+    break;
 
-//   case BACK:
-//     bcmd = (struct backcmd *)cmd;
-//     if (fork1() == 0)
-//       runcmd(bcmd->cmd);
-//     break;
-//   }
-//   exit(0);
-// }
+  case BACK:
+    bcmd = (struct backcmd *)cmd;
+    if (fork() == 0)
+      runcmd(bcmd->cmd);
+    break;
+  }
+  exit(0);
+}

@@ -10,6 +10,9 @@ pub enum SystemError {
     /// 被中断的函数
     /// Interrupted function.
     EINTR = 4,
+    /// 可执行文件格式错误
+    /// Executable file format error.
+    ENOEXEC = 8,
     /// 错误的文件描述符
     /// Bad file descriptor.
     EBADF = 9,
@@ -25,6 +28,9 @@ pub enum SystemError {
     /// 不是一个目录
     /// Not a directory.
     ENOTDIR = 20,
+    /// 是一个目录
+    /// Is a directory.
+    EISDIR = 21,
     /// 非法参数
     /// Invalid argument.
     EINVAL = 22,

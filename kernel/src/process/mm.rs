@@ -3,14 +3,13 @@ use crate::{
     mm::{
         KERNEL_SPACE, MemoryManagementArch,
         address::VirtAddr,
-        mem_space::{MemoryArea, MemoryAreaType, MemoryPermission, MemorySpace},
+        mem_space::{MemoryArea, MemoryAreaType, MemoryPermission},
     },
     process::{ProcessControlBlock, context::TRAP_CONTEXT_PAGE_COUNT},
     sync::spin::SpinMutex,
     utils::RecycleAllocator,
 };
 use lazy_static::lazy_static;
-use xmas_elf::{ElfFile, program::Type};
 
 /// 内核栈大小，单位为页面
 const KERNEL_STACK_SIZE: usize = 4;
@@ -81,7 +80,7 @@ impl ProcessControlBlock {
         // 从 all_top 开始，每个进程都占了三个部分，从高地址往低地址依次是：
         // trap 上下文 -> 用户栈 -> 空白页 -> tls
         let part_size = (TRAP_CONTEXT_PAGE_COUNT + USER_STACK_SIZE + 1) * MMArch::PAGE_SIZE
-            + self.tls_size.unwrap_or(0);
+            + self.tls_size().unwrap_or(0);
         let part_high = all_top - tid * part_size;
         let high = part_high - TRAP_CONTEXT_PAGE_COUNT * MMArch::PAGE_SIZE;
         let low = high - USER_STACK_SIZE * MMArch::PAGE_SIZE;
@@ -105,44 +104,6 @@ impl ProcessControlBlock {
     /// 如果没有 tls 区域则返回 None
     pub fn tls_vaddr(&self, tid: usize) -> Option<VirtAddr> {
         let (low, _) = self.ustack_vaddr(tid);
-        Some(low - MMArch::PAGE_SIZE - self.tls_size?)
-    }
-}
-
-impl MemorySpace {
-    pub(super) fn from_elf(elf: &ElfFile) -> Self {
-        let mut memory_space = MemorySpace::create();
-        elf.program_iter()
-            .filter(|ph| ph.get_type().unwrap() == Type::Load)
-            .for_each(|ph| {
-                let mut permission = MemoryPermission::empty();
-                let ph_flags = ph.flags();
-                if ph_flags.is_read() {
-                    permission |= MemoryPermission::Readable;
-                }
-                if ph_flags.is_write() {
-                    permission |= MemoryPermission::Writable;
-                }
-                if ph_flags.is_execute() {
-                    permission |= MemoryPermission::Executable;
-                }
-                permission |= MemoryPermission::UserAccessible;
-                let vaddr = ph.virtual_addr() as usize / MMArch::PAGE_SIZE * MMArch::PAGE_SIZE;
-                let offset = ph.virtual_addr() as usize % MMArch::PAGE_SIZE;
-                let size = offset + ph.mem_size() as usize;
-                let mut area = MemoryArea::new(
-                    VirtAddr::new(vaddr),
-                    size,
-                    permission,
-                    MemoryAreaType::Private,
-                    "elf",
-                );
-                area.write_data(
-                    offset,
-                    &elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize],
-                );
-                memory_space.push(area);
-            });
-        memory_space
+        Some(low - MMArch::PAGE_SIZE - self.tls_size()?)
     }
 }
