@@ -36,4 +36,20 @@ isize sleep(usize us);
  */
 int waitpid(int pid, int *status, int non_blocking);
 
+/**
+ * 执行新程序，替换当前进程映像
+ * @param path 可执行文件路径
+ * @param argv 参数列表，以 NULL 结尾；可为 NULL
+ * @return 成功时不返回；失败返回 -1 并设置 errno
+ */
+int exec(const char *path, char *const argv[]);
+
+/**
+ * 执行新程序，替换当前进程映像
+ * @param path 可执行文件路径
+ * @param argv 除程序名外的参数列表，以 NULL 结尾；可为 NULL
+ * @return 成功时不返回；失败返回 -1 并设置 errno
+ */
+int execv(const char *path, char *const argv[]);
+
 #endif

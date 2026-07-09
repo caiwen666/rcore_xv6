@@ -1,5 +1,5 @@
 use core::fmt::Debug;
-use core::ops::{Add, AddAssign, Sub};
+use core::ops::{Add, AddAssign, Sub, SubAssign};
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
@@ -116,6 +116,12 @@ impl Sub<usize> for VirtAddr {
 impl AddAssign<usize> for VirtAddr {
     fn add_assign(&mut self, other: usize) {
         self.0 += other;
+    }
+}
+
+impl SubAssign<usize> for VirtAddr {
+    fn sub_assign(&mut self, other: usize) {
+        self.0 -= other;
     }
 }
 

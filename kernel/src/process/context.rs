@@ -21,16 +21,16 @@ pub trait TrapContext: Clone {
     /// - `kstack`: 任务的内核栈的地址
     fn new(kstack: VirtAddr) -> Self;
     /// 设置回到用户态之后执行指令的地址
-    fn set_pc(self, pc: VirtAddr) -> Self;
+    fn set_pc(&mut self, pc: VirtAddr) -> &mut Self;
     /// 获取用户态陷入内核态时执行指令的地址
     #[expect(unused)]
     fn pc(&self) -> VirtAddr;
     /// 设置用户栈地址
-    fn set_ustack(self, ustack: VirtAddr) -> Self;
+    fn set_ustack(&mut self, ustack: VirtAddr) -> &mut Self;
     /// 设置 tls 基址
-    fn set_tls_base(self, tls_base: VirtAddr) -> Self;
+    fn set_tls_base(&mut self, tls_base: VirtAddr) -> &mut Self;
     /// 设置返回值
-    fn set_return_value(&mut self, return_value: usize);
+    fn set_return_value(&mut self, return_value: usize) -> &mut Self;
 }
 
 pub type ArchTrapContext = <IrqArch as InterruptArch>::TrapContext;

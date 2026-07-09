@@ -1,10 +1,11 @@
+#include "cmd.h"
+#include "common.h"
+#include "debug.h"
 #include "lib/errno.h"
 #include "lib/stdio.h"
 #include "lib/string.h"
 #include "lib/sys/file.h"
-#include "cmd.h"
-#include "common.h"
-#include "debug.h"
+#include "lib/sys/process.h"
 #include "lineedit.h"
 #include "parse.h"
 
@@ -56,11 +57,9 @@ int main(void) {
     struct cmd *cmd = parsecmd(buf);
     if (cmd == NULL)
       continue;
-    printcmd(cmd);
-    // TODO
-    // if (fork1() == 0)
-    //   runcmd(cmd);
-    // wait(0);
+    if (fork() == 0)
+      runcmd(cmd);
+    waitpid(0, NULL, 0);
   }
 
   return 0;

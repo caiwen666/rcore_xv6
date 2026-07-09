@@ -26,6 +26,24 @@
 int atoi(const char *s);
 
 /**
+ * @brief 将字符串转换为 long 整数
+ *
+ * 从 nptr 起始位置解析整数，行为与 POSIX strtol 一致：
+ * - 跳过前导空白
+ * - 可选正负号
+ * - base 为 0 时自动识别八进制（0 开头）或十六进制（0x/0X 开头），否则为十进制
+ * - base 为 2～36 时按指定进制解析
+ * - 溢出时设置 errno 为 ERANGE，并返回 LONG_MAX 或 LONG_MIN
+ * - 非法 base 时设置 errno 为 EINVAL，并返回 0
+ *
+ * @param nptr   待解析的字符串
+ * @param endptr 若非 NULL，返回第一个未参与转换的字符位置；若无任何转换则返回 nptr
+ * @param base   进制（0 或 2～36）
+ * @return 解析得到的 long 值
+ */
+long strtol(const char *nptr, char **endptr, int base);
+
+/**
  * @brief 在堆上分配 nbytes 字节的内存
  *
  * 采用 K&R 风格的首次适配（first-fit）空闲链表分配器：

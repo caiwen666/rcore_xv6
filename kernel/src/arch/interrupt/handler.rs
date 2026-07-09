@@ -91,7 +91,7 @@ unsafe extern "C" fn user_trap_handler() {
         scause::Trap::Exception(code) => match Exception::from(code) {
             // 系统调用
             Exception::UserEnvCall => {
-                let trap_context = current_task.trap_context();
+                let trap_context = unsafe { current_task.trap_context() };
                 trap_context.sepc += 4;
 
                 // a7 存放 syscall id

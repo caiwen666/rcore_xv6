@@ -2,7 +2,7 @@
 #include "../sys/process.h"
 #include "../types.h"
 
-extern int main(void);
+extern int main(int argc, char **argv);
 
 extern char __tls_base;
 extern char __tls_data_end;
@@ -27,9 +27,16 @@ static void __tls_init(void) {
   }
 }
 
-__attribute__((section(".text.entry"))) __attribute__((used)) void
-_start(void) {
+static void start_main(int argc, char **argv) {
   __tls_init();
-  int ret = main();
-  exit(ret);
+  exit(main(argc, argv));
+}
+
+// naked 入口：保持内核 exec 设置的 sp 不变，再取出 argc/argv 传给 C 代码
+__attribute__((section(".text.entry"))) __attribute__((used)) __attribute__((naked))
+void _start(void) {
+  __asm__ volatile(
+      "ld a0, 0(sp)\n\t"
+      "addi a1, sp, 8\n\t"
+      "call start_main\n");
 }

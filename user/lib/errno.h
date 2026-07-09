@@ -8,11 +8,13 @@
 #define EPERM 1
 #define ENOENT 2
 #define EINTR 4
+#define ENOEXEC 8
 #define EBADF 9
 #define ECHILD 10
 #define ENOMEM 12
 #define EFAULT 14
 #define ENOTDIR 20
+#define EISDIR 21
 #define EINVAL 22
 #define ERANGE 34
 #define ENAMETOOLONG 36
