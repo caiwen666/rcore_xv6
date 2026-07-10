@@ -3,7 +3,7 @@ use alloc::sync::Arc;
 use crate::{
     console::{Stdin, Stdout},
     error::SystemError,
-    fs::vfs::{VirtualFile, lookup},
+    fs::vfs::{VirtualFile, interface::DirectoryEntry, lookup},
     process::ProcessControlBlock,
 };
 
@@ -14,11 +14,33 @@ pub enum FileSeekMethod {
     End(isize),
 }
 
-pub trait File: Send + Sync {
-    fn read(&self, buf: &mut [u8]) -> Result<usize, SystemError>;
-    fn write(&self, buf: &[u8]) -> Result<usize, SystemError>;
+pub enum ReadDirControl {
+    /// 继续遍历
+    Continue,
+    /// 停止遍历
     #[expect(unused)]
-    fn seek(&self, method: FileSeekMethod) -> Result<usize, SystemError>;
+    Stop,
+    /// 停止遍历，同时让 offset 不因此次遍历而向前推进
+    StopWithBackroll,
+}
+
+pub trait File: Send + Sync {
+    fn read(&self, _buf: &mut [u8]) -> Result<usize, SystemError> {
+        Err(SystemError::EBADF)
+    }
+    fn write(&self, _buf: &[u8]) -> Result<usize, SystemError> {
+        Err(SystemError::EBADF)
+    }
+    #[expect(unused)]
+    fn seek(&self, _method: FileSeekMethod) -> Result<usize, SystemError> {
+        Err(SystemError::EBADF)
+    }
+    fn read_dir(
+        &self,
+        _f: &mut dyn FnMut(DirectoryEntry, &mut ReadDirControl) -> Result<(), SystemError>,
+    ) -> Result<(), SystemError> {
+        Err(SystemError::ENOTDIR)
+    }
 }
 
 impl ProcessControlBlock {

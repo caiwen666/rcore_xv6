@@ -1,8 +1,11 @@
 use crate::{
     error::SystemError,
     fs::{
-        file::{File, FileSeekMethod},
-        vfs::{VirtualIndexNode, interface::FileType},
+        file::{File, FileSeekMethod, ReadDirControl},
+        vfs::{
+            VirtualIndexNode,
+            interface::{DirectoryEntry, FileType},
+        },
     },
     sync::mutex::Mutex,
 };
@@ -65,5 +68,35 @@ impl File for VirtualFile {
         };
         inner.offset = pos;
         Ok(pos)
+    }
+
+    fn read_dir(
+        &self,
+        f: &mut dyn FnMut(DirectoryEntry, &mut ReadDirControl) -> Result<(), SystemError>,
+    ) -> Result<(), SystemError> {
+        let mut inner = self.inner.lock();
+        if inner.inode.metadata().file_type != FileType::Directory {
+            return Err(SystemError::ENOTDIR);
+        }
+        let mut control = ReadDirControl::Continue;
+        loop {
+            let Some(entry) = inner.inode.read_dir(inner.offset as u64) else {
+                return Ok(());
+            };
+            let next_offset = entry.offset_cookie as usize;
+            f(entry, &mut control)?;
+            match control {
+                ReadDirControl::Continue => {
+                    inner.offset = next_offset;
+                }
+                ReadDirControl::Stop => {
+                    inner.offset = next_offset;
+                    return Ok(());
+                }
+                ReadDirControl::StopWithBackroll => {
+                    return Ok(());
+                }
+            }
+        }
     }
 }

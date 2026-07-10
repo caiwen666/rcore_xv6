@@ -69,10 +69,14 @@ impl VirtualIndexNode {
         if let Some(parent_inode_id) = inode.parent() {
             let parent_inode = fs.get_inode_with_cache(parent_inode_id);
             // TODO 需要优化
-            let list = parent_inode.list();
-            list.iter()
-                .find(|(_, id)| *id == self.id)
-                .map(|(name, _)| name.clone())
+            let mut offset = 0;
+            loop {
+                let entry = parent_inode.read_dir(offset)?;
+                if entry.inode == self.id {
+                    return Some(entry.name);
+                }
+                offset = entry.offset_cookie;
+            }
         } else {
             let mount_parent = fs.self_mountpoints.lock().as_ref().cloned();
             mount_parent.and_then(|inode| inode.dir_name())

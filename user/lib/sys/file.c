@@ -24,3 +24,15 @@ char *getcwd(char *buf, usize size) {
   errno = 0;
   return (char *)ret;
 }
+
+int open(const char *path) {
+  return (int)syscall_errno(syscall1(SYS_OPEN, (usize)path));
+}
+
+int close(usize fd) {
+  return (int)syscall_errno(syscall1(SYS_CLOSE, fd));
+}
+
+isize getdents(usize fd, void *buf, usize count) {
+  return syscall_errno(syscall3(SYS_READDIR, fd, (usize)buf, count));
+}

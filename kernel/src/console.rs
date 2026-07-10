@@ -1,9 +1,4 @@
-use crate::{
-    driver::UART0,
-    error::SystemError,
-    fs::file::{File, FileSeekMethod},
-    sync::spin::SpinMutex,
-};
+use crate::{driver::UART0, error::SystemError, fs::file::File, sync::spin::SpinMutex};
 use core::fmt::{self, Write};
 
 static GLOBAL_PRINT_LOCK: SpinMutex<()> = SpinMutex::new((), "global_print_lock");
@@ -25,19 +20,11 @@ pub fn print(args: fmt::Arguments) {
 }
 
 impl File for Stdout {
-    fn read(&self, _buf: &mut [u8]) -> Result<usize, SystemError> {
-        Err(SystemError::EBADF)
-    }
-
     fn write(&self, buf: &[u8]) -> Result<usize, SystemError> {
         for c in buf {
             UART0.put(*c)?;
         }
         Ok(buf.len())
-    }
-
-    fn seek(&self, _method: FileSeekMethod) -> Result<usize, SystemError> {
-        Err(SystemError::EBADF)
     }
 }
 
@@ -63,13 +50,5 @@ impl File for Stdin {
             *c = UART0.get()?;
         }
         Ok(buf.len())
-    }
-
-    fn write(&self, _buf: &[u8]) -> Result<usize, SystemError> {
-        Err(SystemError::EBADF)
-    }
-
-    fn seek(&self, _method: FileSeekMethod) -> Result<usize, SystemError> {
-        Err(SystemError::EBADF)
     }
 }

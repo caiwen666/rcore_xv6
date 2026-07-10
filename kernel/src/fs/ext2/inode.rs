@@ -1,24 +1,27 @@
-use super::fs::FileSystem;
 use crate::{
-    fs::{ext2::layout, vfs::interface},
+    fs::{
+        ext2::layout,
+        vfs::{
+            FileSystem,
+            interface::{self, DirectoryEntry},
+        },
+    },
     utils::BlockIterator,
 };
 use alloc::vec;
-use alloc::{
-    string::{String, ToString},
-    sync::Arc,
-    vec::Vec,
-};
+use alloc::{string::ToString, sync::Arc};
 use zerocopy::FromBytes;
 
+use super::fs::FileSystem as Ext2FileSystem;
+
 pub struct Inode {
-    fs: Arc<FileSystem>,
+    fs: Arc<Ext2FileSystem>,
     layout: layout::Inode,
     id: u32,
 }
 
 impl Inode {
-    pub fn new(fs: Arc<FileSystem>, layout: layout::Inode, id: u32) -> Self {
+    pub fn new(fs: Arc<Ext2FileSystem>, layout: layout::Inode, id: u32) -> Self {
         Self { fs, layout, id }
     }
 
@@ -103,28 +106,24 @@ impl Inode {
     }
 }
 
-/// 遍历目录项
+/// 从 `buf` 的 `offset` 处读取一个目录项
 ///
-/// # Parameters
+/// # Returns
 ///
-/// - `buf`: 目录项列表的数据
-/// - `f`: 每次遍历时的回调函数。每遍历到一个目录项就会调用该函数，传递该目录项的头部和名称
-///   该函数应返回一个 bool 类型，表示还要不要继续遍历。
-fn read_dir_entries(buf: &[u8], mut f: impl FnMut(&layout::DirEntryHeader, &str) -> bool) {
-    let mut offset = 0;
-    while offset + 8 <= buf.len() {
-        let header = layout::DirEntryHeader::read_from_bytes(&buf[offset..offset + 8])
-            .expect("EXT2: failed to parse directory entry header");
-        let name_end = offset + 8 + header.name_len as usize;
-        if header.inode != 0 {
-            let entry_name = core::str::from_utf8(&buf[offset + 8..name_end])
-                .expect("EXT2: invalid directory entry name");
-            if !f(&header, entry_name) {
-                break;
-            }
-        }
-        offset += header.rec_len as usize;
+/// - 返回目录项的头部和目录项的名称
+/// - 如果读取失败（如偏移量超出范围），则返回 None
+fn read_dir_entry(buf: &[u8], offset: usize) -> Option<(layout::DirEntryHeader, &str)> {
+    if offset + 8 > buf.len() {
+        return None;
     }
+    let header = layout::DirEntryHeader::read_from_bytes(&buf[offset..offset + 8])
+        .expect("EXT2: failed to parse directory entry header");
+    let name_end = offset + 8 + header.name_len as usize;
+    if name_end > buf.len() {
+        return None;
+    }
+    let entry_name = core::str::from_utf8(&buf[offset + 8..name_end]).ok()?;
+    Some((header, entry_name))
 }
 
 impl interface::IndexNode for Inode {
@@ -158,15 +157,14 @@ impl interface::IndexNode for Inode {
         let dir_size = self.layout.size as usize;
         let mut data = vec![0u8; dir_size];
         self.read_at(0, &mut data);
-        let mut inode_id = None;
-        read_dir_entries(&data, |header, entry_name| {
-            if name == entry_name {
-                inode_id = Some(header.inode as u64);
-                return false;
+        let mut offset = 0;
+        loop {
+            let (header, entry_name) = read_dir_entry(&data, offset)?;
+            if entry_name == name {
+                return Some(header.inode as u64);
             }
-            true
-        });
-        inode_id
+            offset += header.rec_len as usize;
+        }
     }
 
     fn parent(&self) -> Option<u64> {
@@ -195,16 +193,18 @@ impl interface::IndexNode for Inode {
         }
     }
 
-    fn list(&self) -> Vec<(String, u64)> {
-        let mut list = Vec::new();
+    fn read_dir(&self, offset_cookie: u64) -> Option<DirectoryEntry> {
         let dir_size = self.layout.size as usize;
         let mut data = vec![0u8; dir_size];
         self.read_at(0, &mut data);
-        read_dir_entries(&data, |header, name| {
-            list.push((name.to_string(), header.inode as u64));
-            true
-        });
-        list
+        let (header, name) = read_dir_entry(&data, offset_cookie as usize)?;
+        let inode = self.fs.get_inode(header.inode as u64);
+        Some(DirectoryEntry {
+            name: name.to_string(),
+            offset_cookie: offset_cookie + header.rec_len as u64,
+            inode: header.inode as u64,
+            file_type: inode.metadata().file_type,
+        })
     }
 
     fn id(&self) -> u64 {
