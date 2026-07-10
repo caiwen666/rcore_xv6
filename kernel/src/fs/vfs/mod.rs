@@ -170,48 +170,62 @@ pub fn lookup(base: VirtualIndexNode, path: &str) -> Option<VirtualIndexNode> {
 }
 
 pub struct VirtualFile {
+    inner: Mutex<VirtualFileInner>,
+}
+
+struct VirtualFileInner {
+    offset: usize,
     inode: VirtualIndexNode,
-    offset: SpinMutex<usize>,
 }
 
 impl VirtualFile {
     pub fn new(inode: VirtualIndexNode) -> Self {
         Self {
-            inode,
-            offset: SpinMutex::new(0, "virtual_file_offset"),
+            inner: Mutex::new(VirtualFileInner { offset: 0, inode }, "virtual_file_inner"),
         }
     }
 }
 
 impl File for VirtualFile {
     fn read(&self, buf: &mut [u8]) -> Result<usize, SystemError> {
-        let now_offset = *self.offset.lock();
-        Ok(self.inode.read_at(now_offset, buf))
+        let mut inner = self.inner.lock();
+        if inner.inode.metadata().file_type != FileType::File {
+            return Err(SystemError::EISDIR);
+        }
+        let len = inner.inode.read_at(inner.offset, buf);
+        inner.offset += len;
+        Ok(len)
     }
 
     fn write(&self, buf: &[u8]) -> Result<usize, SystemError> {
-        let file_size = self.inode.metadata().size;
-        let now_offset = *self.offset.lock();
-        if now_offset >= file_size {
-            self.inode.resize(now_offset + 1);
+        let mut inner = self.inner.lock();
+        if inner.inode.metadata().file_type != FileType::File {
+            return Err(SystemError::EISDIR);
         }
-        Ok(self.inode.write_at(now_offset, buf))
+        let file_size = inner.inode.metadata().size;
+        let now_offset = inner.offset;
+        if now_offset >= file_size {
+            inner.inode.resize(now_offset + 1);
+        }
+        let len = inner.inode.write_at(now_offset, buf);
+        inner.offset += len;
+        Ok(len)
     }
 
     fn seek(&self, method: FileSeekMethod) -> Result<usize, SystemError> {
-        let mut now_offset = self.offset.lock();
+        let mut inner = self.inner.lock();
         let pos = match method {
             FileSeekMethod::Absolute(pos) => pos,
             FileSeekMethod::Relative(offset) => {
-                if offset < 0 && *now_offset < offset.unsigned_abs() {
+                if offset < 0 && inner.offset < offset.unsigned_abs() {
                     0
                 } else {
-                    (*now_offset as isize + offset) as usize
+                    (inner.offset as isize + offset) as usize
                 }
             }
-            FileSeekMethod::End(offset) => (self.inode.metadata().size as isize + offset) as usize,
+            FileSeekMethod::End(offset) => (inner.inode.metadata().size as isize + offset) as usize,
         };
-        *now_offset = pos;
+        inner.offset = pos;
         Ok(pos)
     }
 }
