@@ -110,20 +110,27 @@ impl Inode {
 ///
 /// # Returns
 ///
-/// - 返回目录项的头部和目录项的名称
+/// - 返回下一个目录项的偏移量、目录项的头部和目录项的名称
 /// - 如果读取失败（如偏移量超出范围），则返回 None
-fn read_dir_entry(buf: &[u8], offset: usize) -> Option<(layout::DirEntryHeader, &str)> {
-    if offset + 8 > buf.len() {
-        return None;
+fn read_dir_entry(buf: &[u8], mut offset: usize) -> Option<(usize, layout::DirEntryHeader, &str)> {
+    loop {
+        if offset + 8 > buf.len() {
+            return None;
+        }
+        let header = layout::DirEntryHeader::read_from_bytes(&buf[offset..offset + 8])
+            .expect("EXT2: failed to parse directory entry header");
+        // 跳过被删除的目录项
+        if header.inode == 0 {
+            offset += header.rec_len as usize;
+            continue;
+        }
+        let name_end = offset + 8 + header.name_len as usize;
+        if name_end > buf.len() {
+            return None;
+        }
+        let entry_name = core::str::from_utf8(&buf[offset + 8..name_end]).ok()?;
+        return Some((offset + header.rec_len as usize, header, entry_name));
     }
-    let header = layout::DirEntryHeader::read_from_bytes(&buf[offset..offset + 8])
-        .expect("EXT2: failed to parse directory entry header");
-    let name_end = offset + 8 + header.name_len as usize;
-    if name_end > buf.len() {
-        return None;
-    }
-    let entry_name = core::str::from_utf8(&buf[offset + 8..name_end]).ok()?;
-    Some((header, entry_name))
 }
 
 impl interface::IndexNode for Inode {
@@ -159,11 +166,11 @@ impl interface::IndexNode for Inode {
         self.read_at(0, &mut data);
         let mut offset = 0;
         loop {
-            let (header, entry_name) = read_dir_entry(&data, offset)?;
+            let (next_offset, header, entry_name) = read_dir_entry(&data, offset)?;
             if entry_name == name {
                 return Some(header.inode as u64);
             }
-            offset += header.rec_len as usize;
+            offset = next_offset;
         }
     }
 
@@ -196,12 +203,13 @@ impl interface::IndexNode for Inode {
     fn read_dir(&self, offset_cookie: u64) -> Option<DirectoryEntry> {
         let dir_size = self.layout.size as usize;
         let mut data = vec![0u8; dir_size];
+        // TODO 这里实际上还是把整个目录都读了，需要考虑优化
         self.read_at(0, &mut data);
-        let (header, name) = read_dir_entry(&data, offset_cookie as usize)?;
+        let (next_offset, header, name) = read_dir_entry(&data, offset_cookie as usize)?;
         let inode = self.fs.get_inode(header.inode as u64);
         Some(DirectoryEntry {
             name: name.to_string(),
-            offset_cookie: offset_cookie + header.rec_len as u64,
+            offset_cookie: next_offset as u64,
             inode: header.inode as u64,
             file_type: inode.metadata().file_type,
         })
