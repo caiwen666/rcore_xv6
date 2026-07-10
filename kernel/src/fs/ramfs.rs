@@ -1,6 +1,6 @@
 use alloc::{
     collections::btree_map::BTreeMap,
-    string::String,
+    string::{String, ToString},
     sync::{Arc, Weak},
     vec::Vec,
 };
@@ -8,7 +8,7 @@ use alloc::{
 use crate::{
     fs::vfs::{
         FileSystem, IndexNode,
-        interface::{FileType, Metadata},
+        interface::{DirectoryEntry, FileType, Metadata},
     },
     sync::spin::SpinMutex,
 };
@@ -63,7 +63,8 @@ pub struct RamFSInode {
 
 pub enum RamFSInodeType {
     File(Vec<u8>),
-    Directory(BTreeMap<String, u64>),
+    // BTreeMap 的 key 中，第一个元素表示目录项的名称，第二个元素表示目录项是否为文件
+    Directory(BTreeMap<(String, bool), u64>),
 }
 
 impl RamFSInode {
@@ -82,7 +83,7 @@ impl RamFSInode {
             // VFS 框架已经保证不可能出现这种情况
             unreachable!();
         };
-        if map.contains_key(&name) {
+        if map.contains_key(&(name.clone(), false)) {
             panic!("directory already exists");
         }
         let fs = self.fs.upgrade().unwrap();
@@ -99,7 +100,7 @@ impl RamFSInode {
             id,
         });
         fs.inode_map.insert(id, directory.clone());
-        map.insert(name, id);
+        map.insert((name, false), id);
         directory
     }
 
@@ -118,7 +119,7 @@ impl RamFSInode {
             // VFS 框架已经保证不可能出现这种情况
             unreachable!();
         };
-        if map.contains_key(&name) {
+        if map.contains_key(&(name.clone(), true)) {
             panic!("file already exists");
         }
         let fs = self.fs.upgrade().unwrap();
@@ -132,7 +133,7 @@ impl RamFSInode {
             id,
         });
         fs.inode_map.insert(id, file.clone());
-        map.insert(name, id);
+        map.insert((name, true), id);
         file
     }
 }
@@ -155,7 +156,10 @@ impl IndexNode for RamFSInode {
             // VFS 框架已经保证不可能出现这种情况
             unreachable!();
         };
-        map.get(name).cloned()
+        // TODO 同名文件/目录支持
+        map.get(&(name.to_string(), false))
+            .cloned()
+            .or_else(|| map.get(&(name.to_string(), true)).cloned())
     }
 
     fn parent(&self) -> Option<u64> {
@@ -167,26 +171,36 @@ impl IndexNode for RamFSInode {
     /// 对于目录，返回的元数据大小为 0
     fn metadata(&self) -> Metadata {
         let inner = self.inner.lock();
-        if let RamFSInodeType::File(ref content) = *inner {
-            Metadata {
+        match *inner {
+            RamFSInodeType::File(ref content) => Metadata {
                 file_type: FileType::File,
                 size: content.len(),
-            }
-        } else {
-            Metadata {
+            },
+            RamFSInodeType::Directory(ref map) => Metadata {
                 file_type: FileType::Directory,
-                size: 0,
-            }
+                size: map.len(),
+            },
         }
     }
 
-    fn list(&self) -> Vec<(String, u64)> {
+    fn read_dir(&self, offset_cookie: u64) -> Option<DirectoryEntry> {
         let inner = self.inner.lock();
         let RamFSInodeType::Directory(ref map) = *inner else {
             // VFS 框架已经保证不可能出现这种情况
             unreachable!();
         };
-        map.iter().map(|(name, id)| (name.clone(), *id)).collect()
+        // ramfs 的目录项一般不多，所以直接遍历
+        let ((name, is_file), &inode_id) = map.iter().nth(offset_cookie as usize)?;
+        Some(DirectoryEntry {
+            name: name.clone(),
+            offset_cookie: offset_cookie + 1,
+            inode: inode_id,
+            file_type: if *is_file {
+                FileType::File
+            } else {
+                FileType::Directory
+            },
+        })
     }
 
     fn resize(&self, _new_size: usize) {

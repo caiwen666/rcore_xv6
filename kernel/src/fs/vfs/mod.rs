@@ -5,20 +5,17 @@
 //! 2. 提供整套的 Inode 缓存机制
 //! 3. 提供 PageCache 缓存机制
 
+mod file;
 mod inode_cache;
 pub mod interface;
 mod mount;
 mod page_cache;
 
-use core::{cell::UnsafeCell, ops::Deref, ptr::NonNull};
-
 use crate::{
-    error::SystemError,
     fs::{
         ROOT_FS,
-        file::{File, FileSeekMethod},
         vfs::{
-            interface::{FileType, Metadata},
+            interface::{DirectoryEntry, FileType, Metadata},
             page_cache::PageCache,
         },
     },
@@ -27,11 +24,11 @@ use crate::{
 };
 use alloc::{
     collections::btree_map::BTreeMap,
-    string::String,
     sync::{Arc, Weak},
-    vec::Vec,
 };
+use core::{cell::UnsafeCell, ops::Deref, ptr::NonNull};
 
+pub use file::VirtualFile;
 pub(super) use interface::{FileSystem, IndexNode};
 
 /// 虚拟文件系统
@@ -90,21 +87,23 @@ impl VirtualIndexNode {
         self.inode().metadata()
     }
 
-    /// 列出当前目录下的所有文件
+    /// 从 `offset_cookie` 处开始尝试读取目录项
     ///
-    /// # Returns
-    ///
-    /// 返回一个二元组列表，第一个元素是文件名称，第二个元素是文件的 inode 编号
+    /// **会阻塞**
     ///
     /// # Panics
     ///
     /// - 如果当前 inode 的类型不是目录，则 panic
-    pub fn list(&self) -> Vec<(String, u64)> {
+    ///
+    /// # Returns
+    ///
+    /// 如果读取 `offset_cookie` 处没有合法的目录项，则返回 None
+    pub fn read_dir(&self, offset_cookie: u64) -> Option<DirectoryEntry> {
         let inode = self.inode();
         if inode.metadata().file_type != FileType::Directory {
             panic!("current inode is not a directory");
         }
-        inode.list()
+        inode.read_dir(offset_cookie)
     }
 }
 
@@ -167,65 +166,4 @@ pub fn lookup(base: VirtualIndexNode, path: &str) -> Option<VirtualIndexNode> {
         }
     }
     Some(current)
-}
-
-pub struct VirtualFile {
-    inner: Mutex<VirtualFileInner>,
-}
-
-struct VirtualFileInner {
-    offset: usize,
-    inode: VirtualIndexNode,
-}
-
-impl VirtualFile {
-    pub fn new(inode: VirtualIndexNode) -> Self {
-        Self {
-            inner: Mutex::new(VirtualFileInner { offset: 0, inode }, "virtual_file_inner"),
-        }
-    }
-}
-
-impl File for VirtualFile {
-    fn read(&self, buf: &mut [u8]) -> Result<usize, SystemError> {
-        let mut inner = self.inner.lock();
-        if inner.inode.metadata().file_type != FileType::File {
-            return Err(SystemError::EISDIR);
-        }
-        let len = inner.inode.read_at(inner.offset, buf);
-        inner.offset += len;
-        Ok(len)
-    }
-
-    fn write(&self, buf: &[u8]) -> Result<usize, SystemError> {
-        let mut inner = self.inner.lock();
-        if inner.inode.metadata().file_type != FileType::File {
-            return Err(SystemError::EISDIR);
-        }
-        let file_size = inner.inode.metadata().size;
-        let now_offset = inner.offset;
-        if now_offset >= file_size {
-            inner.inode.resize(now_offset + 1);
-        }
-        let len = inner.inode.write_at(now_offset, buf);
-        inner.offset += len;
-        Ok(len)
-    }
-
-    fn seek(&self, method: FileSeekMethod) -> Result<usize, SystemError> {
-        let mut inner = self.inner.lock();
-        let pos = match method {
-            FileSeekMethod::Absolute(pos) => pos,
-            FileSeekMethod::Relative(offset) => {
-                if offset < 0 && inner.offset < offset.unsigned_abs() {
-                    0
-                } else {
-                    (inner.offset as isize + offset) as usize
-                }
-            }
-            FileSeekMethod::End(offset) => (inner.inode.metadata().size as isize + offset) as usize,
-        };
-        inner.offset = pos;
-        Ok(pos)
-    }
 }

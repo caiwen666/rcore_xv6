@@ -1,8 +1,29 @@
 #include "cmd.h"
+#include "common.h"
 #include "lib/stdio.h"
 #include "lib/stdlib.h"
 #include "lib/string.h"
 #include "lib/sys/process.h"
+
+#define BIN_DIR "/root/bin"
+
+static const char *resolve_exec_path(const char *cmd, char *buf, int buflen) {
+  if (strchr(cmd, '/') != 0) {
+    if (strlen(cmd) >= buflen)
+      return 0;
+    strcpy(buf, cmd);
+    return buf;
+  }
+
+  int dirlen = strlen(BIN_DIR);
+  int cmdlen = strlen(cmd);
+  if (dirlen + 1 + cmdlen >= buflen)
+    return 0;
+  strcpy(buf, BIN_DIR);
+  buf[dirlen] = '/';
+  strcpy(buf + dirlen + 1, cmd);
+  return buf;
+}
 
 struct cmd *execcmd(void) {
   struct execcmd *cmd;
@@ -76,12 +97,20 @@ void runcmd(struct cmd *cmd) {
   default:
     fprintf(STDERR, "sh: unknown command type: %d\n", cmd->type);
     exit(1);
+    break;
 
   case EXEC:
     ecmd = (struct execcmd *)cmd;
     if (ecmd->argv[0] == 0)
       exit(1);
-    exec(ecmd->argv[0], ecmd->argv);
+    char path[MAXLINE];
+    const char *exec_path =
+        resolve_exec_path(ecmd->argv[0], path, sizeof(path));
+    if (exec_path == 0) {
+      fprintf(STDERR, "sh: %s: path too long\n", ecmd->argv[0]);
+      break;
+    }
+    exec(exec_path, ecmd->argv);
     fprintf(STDERR, "sh: %s: %s\n", ecmd->argv[0], strerror(errno));
     break;
 

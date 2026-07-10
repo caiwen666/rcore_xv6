@@ -9,7 +9,7 @@ READELF := $(TOOLPREFIX)readelf
 #   目录：编译目录下所有 .c 并链接
 # 示例：hello.c sh tests/my/fork_sleep.c
 # 单个程序：make APP=hello.c
-PROGS ?= hello.c sleep.c sh tests/my/fork_sleep.c tests/my/exec.c
+PROGS ?= hello.c sleep.c ls.c sh tests/my/fork_sleep.c tests/my/exec.c
 ifneq ($(origin APP),undefined)
 PROGS := $(APP)
 endif

@@ -1,6 +1,6 @@
 use crate::utils::BlockIterator;
 use alloc::vec;
-use alloc::{string::String, sync::Arc, vec::Vec};
+use alloc::{string::String, sync::Arc};
 
 pub trait BlockDevice: Send + Sync + 'static {
     /// 块设备的块大小
@@ -86,8 +86,22 @@ pub enum FileType {
 #[derive(Debug, Clone)]
 pub struct Metadata {
     pub file_type: FileType,
-    /// 文件大小。单位：字节
+    /// - 对于文件类型，表示文件大小。单位：字节
+    /// - 对于目录类型，该值应该和 [DirectoryEntry::offset_cookie] 打配合
+    ///   在 [FileSeekMethod::End] 时，会基于该值进行定位
     pub size: usize,
+}
+
+pub struct DirectoryEntry {
+    /// 目录项名称
+    pub name: String,
+    /// 下一个目录项在文件系统的位置，该值用于在文件系统中定位目录项和流式读取目录项，
+    /// 具体含义由文件系统实现决定
+    pub offset_cookie: u64,
+    /// 目录项对应的 inode 编号
+    pub inode: u64,
+    /// 目录项类型
+    pub file_type: FileType,
 }
 
 pub trait IndexNode: Send + Sync {
@@ -139,14 +153,18 @@ pub trait IndexNode: Send + Sync {
     /// VFS 框架不会缓存 metadata，该函数会被频繁调用
     fn metadata(&self) -> Metadata;
 
-    /// 列出当前目录下的所有文件名称，VFS 框架保证调用该函数时，当前 inode 的类型一定是目录类型
+    /// 从 `offset_cookie` 处开始尝试读取目录项
+    ///
+    /// 具体的文件系统需要保证，第一个目录项是 `offset_cookie` 为 `0`
+    ///
+    /// VFS 框架保证调用该函数时，当前 inode 的类型一定是目录类型
     ///
     /// **会阻塞**
     ///
     /// # Returns
     ///
-    /// 返回一个二元组列表，第一个元素是文件名称，第二个元素是文件的 inode 编号
-    fn list(&self) -> Vec<(String, u64)>;
+    /// 如果读取 `offset_cookie` 处没有合法的目录项，则返回 None
+    fn read_dir(&self, offset_cookie: u64) -> Option<DirectoryEntry>;
 
     /// 获取 inode 的编号，该编号会影响 VFS 框架对 inode 的缓存
     fn id(&self) -> u64;

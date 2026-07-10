@@ -18,6 +18,9 @@
 #define SYS_SLEEP 7
 #define SYS_WAITPID 8
 #define SYS_EXEC 9
+#define SYS_OPEN 10
+#define SYS_CLOSE 11
+#define SYS_READDIR 12
 
 isize syscall0(usize id);
 isize syscall1(usize id, usize arg0);
