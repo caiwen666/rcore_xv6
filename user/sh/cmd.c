@@ -74,7 +74,7 @@ void runcmd(struct cmd *cmd) {
 
   switch (cmd->type) {
   default:
-    fprintf(STDERR, "runcmd: unknown command type: %d\n", cmd->type);
+    fprintf(STDERR, "sh: unknown command type: %d\n", cmd->type);
     exit(1);
 
   case EXEC:
@@ -82,11 +82,11 @@ void runcmd(struct cmd *cmd) {
     if (ecmd->argv[0] == 0)
       exit(1);
     exec(ecmd->argv[0], ecmd->argv);
-    fprintf(STDERR, "exec %s failed\n", ecmd->argv[0]);
+    fprintf(STDERR, "sh: %s: %s\n", ecmd->argv[0], strerror(errno));
     break;
 
   case REDIR:
-    fprintf(STDERR, "redircmd: not implemented\n");
+    fprintf(STDERR, "sh: redircmd not implemented\n");
     exit(1);
     // rcmd = (struct redircmd *)cmd;
     // close(rcmd->fd);
@@ -106,7 +106,7 @@ void runcmd(struct cmd *cmd) {
     break;
 
   case PIPE:
-    fprintf(STDERR, "pipecmd: not implemented\n");
+    fprintf(STDERR, "sh: pipecmd not implemented\n");
     exit(1);
     // pcmd = (struct pipecmd *)cmd;
     // if (pipe(p) < 0)
