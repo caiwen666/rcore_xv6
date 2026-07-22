@@ -5,12 +5,11 @@ use core::sync::atomic::Ordering;
 use riscv::register::satp::{self, Satp};
 
 use crate::{
-    arch::{
-        cpu::cpu_id,
-        interrupt::{TLB_SHOOTDOWN_ACK, TLB_SHOOTDOWN_REQUEST},
-        mm::pte::Sv39PTE,
+    arch::{cpu::cpu_id, interrupt::TLB_SHOOTDOWN_ACK, mm::pte::Sv39PTE},
+    driver::{
+        CLINT_ADDR,
+        cpu::{MAX_CPU_COUNT, ONLINE_CPU_COUNT},
     },
-    driver::{CLINT_ADDR, cpu::ONLINE_CPU_COUNT},
     mm::{MemoryManagementArch, mem_space::MemorySpace},
 };
 
@@ -54,13 +53,19 @@ impl MemoryManagementArch for RiscV64MMArch {
         // SAFETY: 此时中断已经关闭
         let me = unsafe { cpu_id() };
 
-        // 使用 release，确保其他线程直到读到这个 req 值，就能读到本次的页表修改
-        let req = TLB_SHOOTDOWN_REQUEST
-            .fetch_add(1, Ordering::Release)
-            .wrapping_add(1);
+        // 在发起 IPI 之前先把每个目标 CPU 的 ACK 计数读出来
+        // 后面发起 IPI 之后，如果目标 CPU 的 ACK 计数发生了改变，就说明目标 CPU 已经完成了一次 TLB shootdown
+        // 即使目标 CPU 的 TLB shootdown 可能不是由于当前 CPU 发起的，但只要刷新了 TLB 就完成了我们的目的
+        let mut snapshot = [0usize; MAX_CPU_COUNT];
+        for hart in 0..online_cpu_count {
+            if hart == me {
+                continue;
+            }
+            snapshot[hart] = TLB_SHOOTDOWN_ACK[hart].load(Ordering::Relaxed);
+        }
 
-        // 确保对 req 的修改在 IPI 发出之前对其他 CPU 可见
-        // 前面对 req 的修改是主存写，后面对 CLINT 写来发起中断是设备写，要用 o
+        // 确保页表的修改在 IPI 发出之前对其他 CPU 可见
+        // 前面对页表的修改是主存写，后面对 CLINT 写来发起中断是设备写，要用 o
         unsafe { core::arch::asm!("fence w,ow") };
 
         // 向每个目标 CPU 的 CLINT MSIP 寄存器写 1，触发机器软件中断（IPI）
@@ -74,14 +79,11 @@ impl MemoryManagementArch for RiscV64MMArch {
 
         let mut remaining = ((1 << online_cpu_count) - 1) & !(1 << me);
         while remaining != 0 {
-            #[expect(clippy::needless_range_loop)]
             for hart in 0..online_cpu_count {
                 if hart == me {
                     continue;
                 }
-                let ack = TLB_SHOOTDOWN_ACK[hart].load(Ordering::Relaxed);
-                // ack >= req 说明目标 CPU 已经 ack 了本次 TLB shootdown 请求
-                if ack.wrapping_sub(req) as isize >= 0 {
+                if TLB_SHOOTDOWN_ACK[hart].load(Ordering::Relaxed) != snapshot[hart] {
                     remaining &= !(1 << hart);
                 }
             }

@@ -110,10 +110,8 @@ impl InterruptArch for RiscV64InterruptArch {
     }
 }
 
-/// 全局 TLB shootdown 请求编号的计数器
-pub static TLB_SHOOTDOWN_REQUEST: AtomicUsize = AtomicUsize::new(0);
-
-/// 每个 CPU 已经 ack 的 TLB shootdown 的请求编号
+/// 每个 CPU 累计已处理的 TLB shootdown 次数，用于 CPU 在发起 tlb_shootdown 之后
+/// 确定目标 CPU 已经 ACK 了
 pub static TLB_SHOOTDOWN_ACK: [AtomicUsize; MAX_CPU_COUNT] =
     [const { AtomicUsize::new(0) }; MAX_CPU_COUNT];
 
@@ -124,8 +122,7 @@ pub static TLB_SHOOTDOWN_ACK: [AtomicUsize; MAX_CPU_COUNT] =
 /// [4]: 请求时钟中断的间隔
 /// [5]: 指向对应 CPU 的 CLINT MSIP，用于 TLB shootdown 的 IPI
 /// [6]: 指向对应 CPU 的 TLB_SHOOTDOWN_ACK 计数器
-/// [7]: 指向当前全局 TLB shootdown 请求编号的计数器
-static mut M_SCRATCH: [[u64; 8]; MAX_CPU_COUNT] = [[0; 8]; MAX_CPU_COUNT];
+static mut M_SCRATCH: [[u64; 7]; MAX_CPU_COUNT] = [[0; 7]; MAX_CPU_COUNT];
 
 /// 初始化 M 模式的陷入处理，时钟中断和 IPI
 ///
@@ -140,7 +137,6 @@ pub fn init_machine_trap(hart_id: usize) {
         M_SCRATCH[hart_id][4] = interval as u64;
         M_SCRATCH[hart_id][5] = msip as u64;
         M_SCRATCH[hart_id][6] = TLB_SHOOTDOWN_ACK[hart_id].as_ptr() as u64;
-        M_SCRATCH[hart_id][7] = TLB_SHOOTDOWN_REQUEST.as_ptr() as u64;
         mscratch::write(M_SCRATCH[hart_id].as_ptr() as usize);
         // 设置 M 模式的陷入处理函数
         unsafe extern "C" {

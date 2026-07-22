@@ -43,14 +43,10 @@ m_trap_soft:
     # 清除当前 CPU 的 MSIP
     ld a1, 40(a0)   # CLINT_MSIP(hart)
     sw x0, 0(a1)
-    # 读取当前的全局 TLB shootdown 请求编号
-    ld a1, 56(a0)   # &TLB_SHOOTDOWN_REQUEST
-    # acquire load req，此时拿到的 req 值携带了其发起 TLB shootdown 请求时页表的变化
-    ld a2, 0(a1)
-    fence r, rw
-    # 更新当前 CPU 的 ack 值
+    # 原子地递增本 CPU 的 ACK 计数，通知发起方已经完成刷新
     ld a1, 48(a0)   # &TLB_SHOOTDOWN_ACK[hart]
-    sd a2, 0(a1)
+    li a2, 1
+    amoadd.d x0, a2, (a1)
     j m_trap_restore
 
 m_trap_restore:
