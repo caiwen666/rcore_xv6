@@ -110,8 +110,7 @@ impl InterruptArch for RiscV64InterruptArch {
     }
 }
 
-/// 每个 CPU 累计已处理的 TLB shootdown 次数，用于 CPU 在发起 tlb_shootdown 之后
-/// 确定目标 CPU 已经 ACK 了
+/// 对于每个 CPU，1 表示已经 ACK 了本次 TLB shootdown 请求，0 表示还没有 ACK
 pub static TLB_SHOOTDOWN_ACK: [AtomicUsize; MAX_CPU_COUNT] =
     [const { AtomicUsize::new(0) }; MAX_CPU_COUNT];
 
@@ -121,7 +120,7 @@ pub static TLB_SHOOTDOWN_ACK: [AtomicUsize; MAX_CPU_COUNT] =
 /// [3]: 指向对应 CPU 的 CLINT MTIMECMP
 /// [4]: 请求时钟中断的间隔
 /// [5]: 指向对应 CPU 的 CLINT MSIP，用于 TLB shootdown 的 IPI
-/// [6]: 指向对应 CPU 的 TLB_SHOOTDOWN_ACK 计数器
+/// [6]: 指向对应 CPU 的 TLB_SHOOTDOWN_ACK
 static mut M_SCRATCH: [[u64; 7]; MAX_CPU_COUNT] = [[0; 7]; MAX_CPU_COUNT];
 
 /// 初始化 M 模式的陷入处理，时钟中断和 IPI

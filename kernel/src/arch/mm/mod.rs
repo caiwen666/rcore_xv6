@@ -1,15 +1,12 @@
 mod init;
 mod pte;
 
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicBool, Ordering};
 use riscv::register::satp::{self, Satp};
 
 use crate::{
     arch::{cpu::cpu_id, interrupt::TLB_SHOOTDOWN_ACK, mm::pte::Sv39PTE},
-    driver::{
-        CLINT_ADDR,
-        cpu::{MAX_CPU_COUNT, ONLINE_CPU_COUNT},
-    },
+    driver::{CLINT_ADDR, cpu::ONLINE_CPU_COUNT},
     mm::{MemoryManagementArch, mem_space::MemorySpace},
 };
 
@@ -53,15 +50,14 @@ impl MemoryManagementArch for RiscV64MMArch {
         // SAFETY: 此时中断已经关闭
         let me = unsafe { cpu_id() };
 
-        // 在发起 IPI 之前先把每个目标 CPU 的 ACK 计数读出来
-        // 后面发起 IPI 之后，如果目标 CPU 的 ACK 计数发生了改变，就说明目标 CPU 已经完成了一次 TLB shootdown
-        // 即使目标 CPU 的 TLB shootdown 可能不是由于当前 CPU 发起的，但只要刷新了 TLB 就完成了我们的目的
-        let mut snapshot = [0usize; MAX_CPU_COUNT];
-        for hart in 0..online_cpu_count {
-            if hart == me {
-                continue;
-            }
-            snapshot[hart] = TLB_SHOOTDOWN_ACK[hart].load(Ordering::Relaxed);
+        // 目前为了简单起见，只允许同一时间只有一个 CPU 发起 TLB shootdown 并等待结束
+        static SHOOTDOWN_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+        // 稳妥一点，这里用 acquire，释放锁的时候用 release
+        while SHOOTDOWN_IN_PROGRESS
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
         }
 
         // 确保页表的修改在 IPI 发出之前对其他 CPU 可见
@@ -79,16 +75,19 @@ impl MemoryManagementArch for RiscV64MMArch {
 
         let mut remaining = ((1 << online_cpu_count) - 1) & !(1 << me);
         while remaining != 0 {
-            for hart in 0..online_cpu_count {
+            for (hart, ack) in TLB_SHOOTDOWN_ACK.iter().enumerate().take(online_cpu_count) {
                 if hart == me {
                     continue;
                 }
-                if TLB_SHOOTDOWN_ACK[hart].load(Ordering::Relaxed) != snapshot[hart] {
+                if ack.load(Ordering::Relaxed) != 0 {
+                    ack.store(0, Ordering::Relaxed);
                     remaining &= !(1 << hart);
                 }
             }
             core::hint::spin_loop();
         }
+
+        SHOOTDOWN_IN_PROGRESS.store(false, Ordering::Release);
     }
 }
 

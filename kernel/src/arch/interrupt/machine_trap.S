@@ -43,10 +43,10 @@ m_trap_soft:
     # 清除当前 CPU 的 MSIP
     ld a1, 40(a0)   # CLINT_MSIP(hart)
     sw x0, 0(a1)
-    # 原子地递增本 CPU 的 ACK 计数，通知发起方已经完成刷新
+    # ACK 本次 TLB shootdown 请求
     ld a1, 48(a0)   # &TLB_SHOOTDOWN_ACK[hart]
     li a2, 1
-    amoadd.d x0, a2, (a1)
+    sd a2, 0(a1)
     j m_trap_restore
 
 m_trap_restore:
