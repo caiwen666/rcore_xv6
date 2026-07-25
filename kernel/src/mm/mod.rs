@@ -50,11 +50,7 @@ pub trait MemoryManagementArch {
     fn local_flush_tlb();
 
     /// 请求其他 CPU 刷新 TLB
-    ///
-    /// # Safety
-    ///
-    /// 调用时需要关闭中断
-    unsafe fn tlb_shootdown();
+    fn tlb_shootdown();
 }
 
 /// 物理内存区域

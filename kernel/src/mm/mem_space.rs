@@ -449,9 +449,7 @@ impl MemorySpace {
 
     fn flush(&mut self) {
         MMArch::local_flush_tlb();
-        // SAFETY: flush 仅在 push/remove 中被调用，而它们都通过 KERNEL_SPACE.lock() 等自旋锁进入，
-        // 此时中断已经关闭
-        unsafe { MMArch::tlb_shootdown() };
+        MMArch::tlb_shootdown();
     }
 
     /// # Safety
