@@ -1,5 +1,6 @@
 pub mod cpu;
 mod entry;
+mod fdt;
 pub mod interrupt;
 mod mm;
 mod register;
