@@ -1,7 +1,7 @@
 core::arch::global_asm!(include_str!("entry.S"));
 
-use crate::kernel_main;
-use core::sync::atomic::{AtomicI8, Ordering};
+use crate::{arch::fdt, driver::cpu::online_cpu_count, kernel_main};
+use core::sync::atomic::{AtomicI8, AtomicUsize, Ordering};
 use riscv::register::{
     Permission as PmpPermission, Range as PmpRange, mcounteren as RiscvMcounteren,
     medeleg as RiscvMedeleg, mepc as RiscvMepc, mhartid as RiscvMhartid, mideleg as RiscvMideleg,
@@ -10,11 +10,12 @@ use riscv::register::{
 };
 
 #[unsafe(no_mangle)]
-extern "C" fn init_cpu() -> ! {
+extern "C" fn init_cpu(dtb_pa: usize) -> ! {
     let hart_id = RiscvMhartid::read();
+    unsafe { super::register::tp::write_tp(hart_id) };
 
-    // 设置成 -1 可以防止 BSS_READY 本身进了 bss 段
-    static BSS_READY: AtomicI8 = AtomicI8::new(-1);
+    // 设置成 -1 可以防止 EARLY_INIT_READY 本身进了 bss 段
+    static EARLY_INIT_READY: AtomicI8 = AtomicI8::new(-1);
     if hart_id == 0 {
         // 只由 CPU0 来清空 BSS 段
         unsafe extern "C" {
@@ -24,9 +25,10 @@ extern "C" fn init_cpu() -> ! {
         ((sbss as *const () as usize)..(ebss as *const () as usize)).for_each(|a| unsafe {
             (a as *mut u8).write_volatile(0);
         });
-        BSS_READY.store(1, Ordering::Release);
+        fdt::init_from_dtb(dtb_pa);
+        EARLY_INIT_READY.store(1, Ordering::Release);
     } else {
-        while BSS_READY.load(Ordering::Acquire) != 1 {
+        while EARLY_INIT_READY.load(Ordering::Acquire) != 1 {
             core::hint::spin_loop();
         }
     }
@@ -73,11 +75,15 @@ extern "C" fn init_cpu() -> ! {
     mcounteren.set_tm(true);
     unsafe { RiscvMcounteren::write(mcounteren) };
 
-    // 将 cpu 的 id 写到 tp 寄存器上
-    unsafe { super::register::tp::write_tp(hart_id) };
-
     // 初始化 M 模式的陷入处理（时钟中断 + IPI）
     super::interrupt::init_machine_trap(hart_id);
+
+    // 等待所有 CPU 都初始化完成后再继续，确保所有 CPU 都设置好了中断之类的
+    static READY_COUNT: AtomicUsize = AtomicUsize::new(0);
+    READY_COUNT.fetch_add(1, Ordering::Release);
+    while READY_COUNT.load(Ordering::Acquire) != online_cpu_count() {
+        core::hint::spin_loop();
+    }
 
     // 跳到内核的入口，并进入 Supervisor 模式
     unsafe { core::arch::asm!("mret", options(noreturn)) };

@@ -1,8 +1,4 @@
-use core::sync::atomic::AtomicUsize;
-
-/// 支持的最大 CPU 数量
-///
-/// TODO 扫描设备树来动态获取
+/// 支持的最大 CPU id + 1，所有在线的 CPU id 必须小于这个值，同时这个值也决定了内核中最多可以使用的 CPU 数量
 pub const MAX_CPU_COUNT: usize = 8;
 /// CPU 的基准时钟周期频率。QEMU 默认为 10MHz，即 1 秒走 10000000 个周期
 pub const CLOCK_CYCLE: usize = 10000000;
@@ -19,5 +15,33 @@ struct AlignedBootStack([u8; BOOT_STACK_SIZE * MAX_CPU_COUNT]);
 #[unsafe(link_section = ".data.boot_stack")]
 static BOOT_STACK: AlignedBootStack = AlignedBootStack([0; BOOT_STACK_SIZE * MAX_CPU_COUNT]);
 
-/// 在线的 CPU 数量
-pub static ONLINE_CPU_COUNT: AtomicUsize = AtomicUsize::new(0);
+static mut ONLINE_CPU_MASK: usize = 0;
+
+/// 设置在线 CPU
+///
+/// # Panics
+///
+/// 如果 CPU 数量大于 [`MAX_CPU_COUNT`]，则 panic
+///
+/// # Safety
+///
+/// 必须在 CPU 0 早期初始化时设置，并且只能设置一次
+pub unsafe fn set_online_cpu_mask(cpu_mask: usize) {
+    let count = cpu_mask.count_ones() as usize;
+    assert!(cpu_mask < (1 << MAX_CPU_COUNT), "CPU id is too large");
+    assert!(
+        count <= MAX_CPU_COUNT,
+        "CPU count must be less than or equal to MAX_CPU_COUNT"
+    );
+    unsafe {
+        ONLINE_CPU_MASK = cpu_mask;
+    }
+}
+
+pub fn online_cpu_mask() -> usize {
+    unsafe { ONLINE_CPU_MASK }
+}
+
+pub fn online_cpu_count() -> usize {
+    unsafe { ONLINE_CPU_MASK.count_ones() as usize }
+}

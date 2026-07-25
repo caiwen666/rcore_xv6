@@ -8,7 +8,7 @@ use crate::{
     arch::{cpu::cpu_id, interrupt::TLB_SHOOTDOWN_ACK, mm::pte::Sv39PTE},
     driver::{
         CLINT_ADDR,
-        cpu::{MAX_CPU_COUNT, ONLINE_CPU_COUNT},
+        cpu::{MAX_CPU_COUNT, online_cpu_mask},
     },
     mm::{MemoryManagementArch, mem_space::MemorySpace},
 };
@@ -49,7 +49,7 @@ impl MemoryManagementArch for RiscV64MMArch {
     }
 
     unsafe fn tlb_shootdown() {
-        let online_cpu_count = ONLINE_CPU_COUNT.load(Ordering::Relaxed);
+        let cpu_mask = online_cpu_mask();
         // SAFETY: 此时中断已经关闭
         let me = unsafe { cpu_id() };
 
@@ -57,8 +57,8 @@ impl MemoryManagementArch for RiscV64MMArch {
         // 后面发起 IPI 之后，如果目标 CPU 的 ACK 计数发生了改变，就说明目标 CPU 已经完成了一次 TLB shootdown
         // 即使目标 CPU 的 TLB shootdown 可能不是由于当前 CPU 发起的，但只要刷新了 TLB 就完成了我们的目的
         let mut snapshot = [0usize; MAX_CPU_COUNT];
-        for hart in 0..online_cpu_count {
-            if hart == me {
+        for hart in 0..MAX_CPU_COUNT {
+            if (cpu_mask & (1 << hart)) == 0 || hart == me {
                 continue;
             }
             snapshot[hart] = TLB_SHOOTDOWN_ACK[hart].load(Ordering::Relaxed);
@@ -69,18 +69,18 @@ impl MemoryManagementArch for RiscV64MMArch {
         unsafe { core::arch::asm!("fence w,ow") };
 
         // 向每个目标 CPU 的 CLINT MSIP 寄存器写 1，触发机器软件中断（IPI）
-        for hart in 0..online_cpu_count {
-            if hart == me {
+        for hart in 0..MAX_CPU_COUNT {
+            if (cpu_mask & (1 << hart)) == 0 || hart == me {
                 continue;
             }
             let msip = CLINT_ADDR + 4 * hart;
             unsafe { core::ptr::write_volatile(msip as *mut u32, 1) };
         }
 
-        let mut remaining = ((1 << online_cpu_count) - 1) & !(1 << me);
+        let mut remaining = cpu_mask & !(1 << me);
         while remaining != 0 {
-            for hart in 0..online_cpu_count {
-                if hart == me {
+            for hart in 0..MAX_CPU_COUNT {
+                if (remaining & (1 << hart)) == 0 {
                     continue;
                 }
                 if TLB_SHOOTDOWN_ACK[hart].load(Ordering::Relaxed) != snapshot[hart] {
