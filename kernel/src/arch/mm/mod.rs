@@ -11,6 +11,7 @@ use crate::{
         cpu::{MAX_CPU_COUNT, online_cpu_mask},
     },
     mm::{MemoryManagementArch, mem_space::MemorySpace},
+    sync::spin::SpinMutex,
 };
 
 pub struct RiscV64MMArch;
@@ -48,21 +49,13 @@ impl MemoryManagementArch for RiscV64MMArch {
         };
     }
 
-    unsafe fn tlb_shootdown() {
+    fn tlb_shootdown() {
+        // 目前为了简单起见，只允许同一时间只有一个 CPU 发起 TLB shootdown 并等待结束
+        static SHOOTDOWN_IN_PROGRESS: SpinMutex<()> = SpinMutex::new((), "tlb_shootdown");
+        let _lock = SHOOTDOWN_IN_PROGRESS.lock();
         let cpu_mask = online_cpu_mask();
         // SAFETY: 此时中断已经关闭
         let me = unsafe { cpu_id() };
-
-        // 在发起 IPI 之前先把每个目标 CPU 的 ACK 计数读出来
-        // 后面发起 IPI 之后，如果目标 CPU 的 ACK 计数发生了改变，就说明目标 CPU 已经完成了一次 TLB shootdown
-        // 即使目标 CPU 的 TLB shootdown 可能不是由于当前 CPU 发起的，但只要刷新了 TLB 就完成了我们的目的
-        let mut snapshot = [0usize; MAX_CPU_COUNT];
-        for hart in 0..MAX_CPU_COUNT {
-            if (cpu_mask & (1 << hart)) == 0 || hart == me {
-                continue;
-            }
-            snapshot[hart] = TLB_SHOOTDOWN_ACK[hart].load(Ordering::Relaxed);
-        }
 
         // 确保页表的修改在 IPI 发出之前对其他 CPU 可见
         // 前面对页表的修改是主存写，后面对 CLINT 写来发起中断是设备写，要用 o
@@ -79,11 +72,12 @@ impl MemoryManagementArch for RiscV64MMArch {
 
         let mut remaining = cpu_mask & !(1 << me);
         while remaining != 0 {
-            for hart in 0..MAX_CPU_COUNT {
-                if (remaining & (1 << hart)) == 0 {
+            for (hart, ack) in TLB_SHOOTDOWN_ACK.iter().enumerate() {
+                if hart == me || (cpu_mask & (1 << hart)) == 0 {
                     continue;
                 }
-                if TLB_SHOOTDOWN_ACK[hart].load(Ordering::Relaxed) != snapshot[hart] {
+                if ack.load(Ordering::Relaxed) != 0 {
+                    ack.store(0, Ordering::Relaxed);
                     remaining &= !(1 << hart);
                 }
             }
